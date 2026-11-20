@@ -65,7 +65,7 @@ test('queue tick: a change that conflicts with the future trunk is evicted befor
   const context = setup({ batchSize: 2, maxParallelChecks: 1, flakyRetries: 0 }, ['a', 'b']);
   context.vcs.conflicts.add('b');
   await drain(context);
-  assert.deepEqual(context.ledger.ofType('evict'), [{ change: 'b', ticket: 'b', reason: 'Conflicts with the future trunk.' }]);
+  assert.deepEqual(context.ledger.ofType('evict'), [{ change: 'b', ticket: 'b', reason: 'Conflicts with the future trunk.', identity: 'b@reviewed-b#e0' }]);
   assert.deepEqual(landed(context), ['a']);
   assert.deepEqual(context.store.changes, {});
 });
@@ -131,7 +131,48 @@ test('queue tick: a tick interrupted after the fast-forward is replayed without 
   assert.deepEqual(context.store.queue.pending, []);
 });
 
-test('queue tick: random admissions, failures and timings always converge on the right trunk', async () => {
+test('queue tick: a tick interrupted after several landings, or after an eviction, is replayed with each effect recorded once', async () => {
+  const context = setup({ batchSize: 1, maxParallelChecks: 3, flakyRetries: 0 }, ['a', 'b', 'c']);
+  await context.tick();
+  context.judge((id) => id === 'c');
+  const before = context.store;
+  await queueTick(before, config, context.ports); // lands a and b, starts bisecting; its state is lost
+  context.store = before;
+  await drain(context, (id) => id === 'c');
+  assert.deepEqual(landed(context), ['a', 'b'], 'nothing is landed or recorded twice');
+  assert.deepEqual(evicted(context), ['c']);
+  assert.deepEqual(context.ledger.ofType('ticket_outcome').map((entry) => [entry.ticket, entry.outcome]), [['c', 'rework']]);
+  assert.deepEqual(context.vcs.contents.get(await context.vcs.head('main')), ['a', 'b']);
+
+  const again = setup({ batchSize: 1, maxParallelChecks: 1, flakyRetries: 0 }, ['x']);
+  await again.tick();
+  again.judge(() => true);
+  const saved = again.store;
+  await queueTick(saved, config, again.ports);
+  await queueTick(saved, config, again.ports);
+  assert.deepEqual(evicted(again), ['x'], 'a replayed eviction counts once against the ticket');
+  again.store = await queueTick(saved, config, again.ports);
+  again.admit('x');
+  await again.tick();
+  again.judge(() => true);
+  await again.tick();
+  assert.deepEqual(evicted(again), ['x', 'x'], 'a later stay of the same commit in the queue is another eviction');
+});
+
+test('queue tick: while the factory is halted, results are read but nothing lands and nobody is evicted', async () => {
+  const context = setup({ batchSize: 1, maxParallelChecks: 2, flakyRetries: 0 }, ['a', 'b']);
+  let halted = true;
+  context.ports.halted = async () => halted;
+  await context.tick();
+  context.judge((id) => id === 'b');
+  await context.tick();
+  assert.deepEqual([await context.vcs.head('main'), landed(context), evicted(context)], ['base', [], []]);
+  halted = false;
+  await drain(context, (id) => id === 'b');
+  assert.deepEqual([landed(context), evicted(context)], [['a'], ['b']]);
+});
+
+test('queue tick: random admissions, failures, timings and interrupted ticks always converge on the right trunk', async () => {
   let seed = 20261120;
   const random = () => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -145,6 +186,7 @@ test('queue tick: random admissions, failures and timings always converge on the
     const waiting = [...ids];
     for (let tick = 0; tick < 200; tick += 1) {
       while (waiting.length > 0 && random() < 0.5) context.admit(waiting.shift());
+      if (random() < 0.15) await queueTick(context.store, config, context.ports); // a tick whose state is lost before it is saved
       await context.tick();
       // Verdicts arrive in a random order and at random times.
       for (const [sha, changes] of context.vcs.contents) {

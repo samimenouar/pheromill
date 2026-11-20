@@ -28,9 +28,11 @@ The first three measure throughput, the last two instability.
 `pheromill metrics dora` computes them today from a delivery log. Writing that
 log from the factory's own deployment step is planned.
 
-Factory-specific indicators complete them: checks green on the first try,
-correction rounds, findings after merge, refuted findings, change size, check
-runs per change, cost per point, and net progress per milestone.
+Factory-specific indicators are meant to complete them: checks green on the
+first try, correction rounds, findings after merge, refuted findings, change
+size, check runs per change, cost per point, and net progress per milestone.
+Today the ledger records what they need, and two are computed: net progress
+and cost per ticket. The others are planned.
 
 ## Budget
 
@@ -42,7 +44,7 @@ daily ceiling per subscription, to bound overall spending, is planned.
 | Commits on the branch | 15 |
 | Review and discussion comments | 25 |
 | Correction rounds | 2, then the arbiter |
-| Passes of an external tool | 1, on HIGH and CRITICAL changes only |
+| Passes of an external tool | 1, on a HIGH or CRITICAL commit the model reviews let through; a later commit it did not examine goes to the owner |
 | Check runs | 4 |
 | Sandbox time | 30 minutes per point for the whole ticket, and 30 minutes for any single step; to recalibrate after four weeks of measurements |
 | Tokens | Not set until four weeks of measurements exist |
@@ -62,13 +64,18 @@ deterministic:
 
 1. The same error three times in a row.
 2. A counter of the budget above its ceiling.
-3. Two steps in a row that change no file.
-4. A change above 400 lines, or a ticket above 5 points, along the way.
-5. A finding that was already refuted comes back.
+3. Two attempts in a row that change nothing: an empty patch, or the same
+   patch again.
+4. A change above 400 lines, hidden scenarios included, or a ticket above 5
+   points, along the way.
+5. A finding that was already refuted comes back. It is neither dropped nor
+   argued a second time.
 
 The arbiter has three outcomes: split the ticket, hand it to an agent of
 another family, or ask the owner. A model may propose the outcome, but only
 among those three. **One escalation per ticket**; after that, the owner decides.
+When the ticket is handed to another family, that author starts from the
+trunk and its change is judged afresh.
 
 ## Autonomy tiers
 
@@ -83,7 +90,8 @@ button. The factory earns the right to merge alone one risk level at a time.
 | 3 | Every level |
 
 Below the required tier, a change that passed every gate waits for a person
-to add the label `factory:approved`.
+to add the label `factory:approved`; the approval is tied to the reviewed
+commit (see [delivery.md](delivery.md)).
 
 Promotion is meant to be a comparison between measured values and thresholds
 written before the measurements started. The thresholds and the tier live in

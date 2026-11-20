@@ -44,11 +44,11 @@ deterministic code. An agent never decides whether its own work passes.
 
 | Principle | What it means here |
 | --- | --- |
-| Nobody approves their own work | Reviewers and the refuter always come from another model family than the author. With one family configured, nothing can be approved. |
+| Nobody approves their own work | Reviewers and the refuter never belong to a model family that wrote the implementation. With one family configured, nothing can be approved. |
 | An agent cannot cheat | Acceptance scenarios are hidden from the implementer. Touching an existing test raises the risk level and triggers a dedicated review. Rules, prompts and configuration are reserved paths. The gates judge what git says a patch does, not what the patch claims. |
 | Risk decides the gates | LOW, HIGH or CRITICAL is computed from the files a change touches. Autonomy is earned one level at a time, on measured results. |
 | The trunk is always green | Every change is tested on the future state of the trunk, in batches, with bisection on failure. The trunk only fast-forwards to a commit that passed. |
-| Loops end | Five deterministic triggers stop a ticket that goes in circles. It is escalated once; after that the owner decides. |
+| Loops end | Five deterministic triggers stop a ticket that goes in circles. It is escalated once; after that the owner decides. An owner's approval is tied to one commit. |
 | Secrets stay out | Each step runs in a fresh container whose only way out is a filtering proxy. Model keys never enter it: a gateway adds them outside. |
 | Every choice leaves a trace | Decisions are appended to a hash-chained ledger. Costs that were not measured are reported as UNKNOWN, never estimated. |
 

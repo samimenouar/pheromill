@@ -77,11 +77,21 @@ export function detectLoop(run, budget, limits) {
   if (run.changedLines > limits.midFlightChangedLines || run.points > limits.maxPoints) {
     return { trigger: 'size_exceeded', detail: `${run.changedLines} changed lines, ${run.points} points.` };
   }
-  const returned = run.raisedFingerprints.find((fp) => run.refutedFingerprints.includes(fp));
+  const returned = returnedFinding(run);
   if (returned) {
     return { trigger: 'refuted_finding_returned', detail: returned };
   }
   return null;
+}
+
+/**
+ * A finding raised again after it was refuted: the reviewer and the refuter
+ * disagree, and arguing once more would not settle it.
+ * @param {{refutedFingerprints: string[], raisedFingerprints: string[]}} run
+ * @returns {string|null} the fingerprint that came back
+ */
+export function returnedFinding(run) {
+  return run.raisedFingerprints.find((fp) => run.refutedFingerprints.includes(fp)) ?? null;
 }
 
 /**

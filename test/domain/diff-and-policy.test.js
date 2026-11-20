@@ -140,3 +140,17 @@ test('patch policy: a change above 500 lines or an empty patch is rejected', () 
   assert.deepEqual(checkPatch(big, testConfig()).violations.map((v) => v.rule), ['too_large']);
   assert.deepEqual(checkPatch([], testConfig()).violations.map((v) => v.rule), ['empty_patch']);
 });
+
+test('diff: a path that contains a space is read as git writes it, with a tab after the name', () => {
+  const patch = ['diff --git a/docs/user guide.md b/docs/user guide.md', 'index 1111111..2222222 100644', '--- a/docs/user guide.md\t', '+++ b/docs/user guide.md\t', '@@ -1 +1 @@', '-old', '+new', ''].join('\n');
+  const [file] = parseUnifiedDiff(patch);
+  assert.deepEqual([file.path, file.unsafePath, file.added, file.removed], ['docs/user guide.md', false, ['new'], ['old']]);
+});
+
+test('patch policy: lines that ship in the same change count towards its size', () => {
+  const files = parseUnifiedDiff(fileDiff('src/a.js', { added: Array.from({ length: 300 }, (_, i) => `line ${i}`), status: 'added' }));
+  assert.equal(checkPatch(files, testConfig()).ok, true);
+  const { ok, violations } = checkPatch(files, testConfig(), { carriedLines: 201 });
+  assert.equal(ok, false);
+  assert.deepEqual(violations.map((v) => [v.rule, v.detail]), [['too_large', '501 changed lines (201 of them in hidden scenarios) exceed the limit of 500.']]);
+});

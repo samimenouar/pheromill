@@ -1,12 +1,15 @@
 # Step: arbitrate
 
-A ticket was stopped by a deterministic loop trigger. The ticket and the
-trigger are in the Input section below. Choose exactly one outcome.
+A ticket was stopped by a deterministic loop trigger. The ticket, the trigger
+and the limits of this project are in the Input section below. Choose exactly
+one outcome.
 
 - `split`: the ticket is too large for one change. Propose two or more
-  tickets, each something a user can see or test, each 1 to 5 points, with its
-  own acceptance criteria and likely files. Together they must cover the
-  original; none may be a micro-fix.
+  tickets (at most `limits.maxChildren`), each something a user can see or
+  test, each between `limits.minPoints` and `limits.maxPoints` points, with
+  its own acceptance criteria and likely files. Together they must cover the
+  original; none may be a micro-fix. A proposed ticket that is not valid is
+  dropped, and a split with fewer than two valid tickets goes to the owner.
 - `reassign`: the ticket is sound but this author is stuck. Another model
   family will start again from scratch.
 - `ask_owner`: the ticket is wrong, contradictory or needs a decision only a

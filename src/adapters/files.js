@@ -4,7 +4,7 @@
  */
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { appendFile, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, open, readFile, rename, truncate, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultConfig, mergeConfig, validateConfig } from '../domain/config.js';
 import { chainEntry } from '../domain/ledger.js';
@@ -44,12 +44,28 @@ export async function readUntrustedJson(path, maxBytes) {
 }
 
 async function readLines(path) {
+  let text;
   try {
-    return (await readFile(path, 'utf8')).split('\n').filter((line) => line !== '').map((line) => JSON.parse(line));
+    text = await readFile(path, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw error;
   }
+  // A record is complete only once its newline is written: a torn last line is not an entry.
+  const complete = text.slice(0, text.lastIndexOf('\n') + 1);
+  return complete.split('\n').filter((line) => line !== '').map((line) => JSON.parse(line));
+}
+
+/** Cut a torn last record (a write interrupted by a full disk or a crash) before appending. */
+async function repairTail(path) {
+  let text;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch {
+    return;
+  }
+  const end = text.lastIndexOf('\n') + 1;
+  if (end !== text.length) await truncate(path, Buffer.byteLength(text.slice(0, end)));
 }
 
 /** Append-only JSON Lines ledger where each entry commits to the previous one. */
@@ -67,21 +83,41 @@ export class FileLedger {
   }
 
   append(type, data) {
-    // Serialised so that concurrent appends cannot fork the chain.
-    const next = this.pending.then(async () => {
-      try {
-        if (this.last === undefined) this.last = (await this.entries()).at(-1) ?? null;
-        const entry = chainEntry(this.last, type, data, this.clock.now().toISOString());
-        await mkdir(dirname(this.path), { recursive: true });
-        await appendFile(this.path, `${JSON.stringify(entry)}\n`);
-        this.last = entry;
-      } catch (error) {
-        this.last = undefined; // read the file again next time: one failure must not poison the chain
-        throw error;
-      }
+    return this.enqueue(() => this.write(type, data));
+  }
+
+  /**
+   * Append unless an entry of this type with the same identity exists. Makes
+   * a replayed operation leave one trace, not two.
+   */
+  appendOnce(type, identity, data) {
+    return this.enqueue(async () => {
+      const exists = (await this.entries()).some((entry) => entry.type === type && entry.data?.identity === identity);
+      if (!exists) await this.write(type, { ...data, identity });
     });
+  }
+
+  /** One operation at a time, so that concurrent appends cannot fork the chain. */
+  enqueue(operation) {
+    const next = this.pending.then(operation);
     this.pending = next.catch(() => {});
     return next;
+  }
+
+  async write(type, data) {
+    try {
+      if (this.last === undefined) {
+        await repairTail(this.path);
+        this.last = (await this.entries()).at(-1) ?? null;
+      }
+      const entry = chainEntry(this.last, type, data, this.clock.now().toISOString());
+      await mkdir(dirname(this.path), { recursive: true });
+      await appendFile(this.path, `${JSON.stringify(entry)}\n`);
+      this.last = entry;
+    } catch (error) {
+      this.last = undefined; // read the file again next time: one failure must not poison the chain
+      throw error;
+    }
   }
 }
 
@@ -129,6 +165,8 @@ export async function trackedFiles(directory) {
   for (const path of listing.split('\0').filter(Boolean)) {
     let buffer;
     try {
+      // A tracked symbolic link is not opened: its target may be outside the checkout.
+      if (!(await lstat(join(directory, path))).isFile()) continue;
       buffer = await readFile(join(directory, path));
     } catch {
       continue; // deleted in the working tree

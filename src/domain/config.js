@@ -18,7 +18,7 @@ export function defaultConfig() {
     paths: {
       reserved: ['pheromill.config.json', 'AGENTS.md', 'CLAUDE.md', '.github/**', '.gitlab-ci.yml', 'deploy/**', 'proofs/**', 'prompts/**'],
       core: [],
-      manifests: ['package.json', '**/package.json', '.npmrc', '**/.npmrc', 'requirements*.txt', 'pyproject.toml', 'go.mod', 'Cargo.toml', 'Gemfile', '.gitattributes'],
+      manifests: ['package.json', '**/package.json', '.npmrc', '**/.npmrc', 'requirements*.txt', 'pyproject.toml', 'go.mod', 'Cargo.toml', 'Gemfile', '.gitattributes', '**/.gitattributes', '.gitmodules', '.gitignore', '**/.gitignore'],
       tests: ['test/**', 'tests/**', '**/*.test.*', '**/*.spec.*'],
       holdout: ['holdout/**'],
       queueOwned: ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'],
@@ -92,8 +92,18 @@ export function validateConfig(config) {
     if (!condition) problems.push(message);
   };
 
-  const known = Object.keys(defaultConfig());
-  for (const key of Object.keys(config)) need(known.includes(key), `Unknown setting "${key}".`);
+  const defaults = defaultConfig();
+  for (const key of Object.keys(config)) need(Object.hasOwn(defaults, key), `Unknown setting "${key}".`);
+  // Sections are objects, and a misspelt key inside one is an error, not a silent default.
+  for (const section of ['project', 'forge', 'paths', 'limits', 'budget', 'scheduling', 'milestone', 'queue', 'dependencies', 'sandbox', 'autonomy', 'providers', 'harnesses', 'egress', 'architecture']) {
+    if (!isPlainObject(config[section])) {
+      problems.push(`${section} must be an object.`);
+      continue;
+    }
+    if (['providers', 'harnesses', 'egress'].includes(section)) continue;
+    for (const key of Object.keys(config[section])) need(Object.hasOwn(defaults[section], key), `Unknown setting "${section}.${key}".`);
+  }
+  if (problems.length > 0) return problems;
   need(config.version === 1, 'version must be 1.');
   need(typeof config.project?.name === 'string' && config.project.name !== '', 'project.name is required.');
   need(typeof config.project?.trunk === 'string' && config.project.trunk !== '', 'project.trunk is required.');
@@ -107,10 +117,13 @@ export function validateConfig(config) {
 
   for (const [name, globs] of Object.entries(config.paths ?? {})) {
     need(Array.isArray(globs) && globs.every((glob) => typeof glob === 'string' && glob !== '' && !glob.endsWith('/') && !glob.startsWith('/') && !glob.startsWith('./')), `paths.${name} must be a list of globs without leading "/" or "./" and without trailing "/" (use "dir/**").`);
+    // More than two wildcards in one path segment make matching explode.
+    need(!Array.isArray(globs) || globs.every((glob) => String(glob).length <= 200 && String(glob).split('/').every((segment) => segment === '**' || (segment.match(/[*?]/g) ?? []).length <= 2)), `paths.${name}: at most two wildcards per path segment.`);
   }
   const reserved = Array.isArray(config.paths?.reserved) ? config.paths.reserved : [];
   for (const path of ALWAYS_RESERVED) need(reserved.includes(path), `paths.reserved must protect ${path}.`);
   need(Array.isArray(config.paths?.holdout) && config.paths.holdout.length > 0, 'paths.holdout must name where hidden scenarios live.');
+  need(Array.isArray(config.paths?.tests) && config.paths.tests.length > 0, 'paths.tests must name where tests live: test protection depends on it.');
   for (const name of ['reserved', 'core', 'manifests', 'tests', 'holdout', 'queueOwned', 'snapshots', 'thresholds', 'production']) {
     need(Array.isArray(config.paths?.[name]), `paths.${name} is required.`);
   }
@@ -128,12 +141,13 @@ export function validateConfig(config) {
     need(positiveInteger(budget?.[key], 100), `budget.${key} must be an integer from 1 to 100.`);
   }
   need(positiveInteger(budget?.fixRounds, 3), 'budget.fixRounds must be 1, 2 or 3.');
-  need(positiveNumber(budget?.sandboxSecondsPerPoint), 'budget.sandboxSecondsPerPoint must be a positive number of seconds.');
+  need(positiveNumber(budget?.sandboxSecondsPerPoint) && budget.sandboxSecondsPerPoint <= 86400, 'budget.sandboxSecondsPerPoint must be a number of seconds from 1 to 86400.');
   need(budget?.tokensPerPoint === null || positiveNumber(budget?.tokensPerPoint), 'budget.tokensPerPoint must be null (not calibrated) or a positive number.');
   need(typeof budget?.alertRatio === 'number' && budget.alertRatio > 0 && budget.alertRatio <= 1, 'budget.alertRatio must be in (0, 1].');
   const sandbox = config.sandbox;
   need(/^[1-9]\d*:[1-9]\d*$/.test(sandbox?.user ?? ''), 'sandbox.user must be a non-root uid:gid.');
-  for (const key of ['cpus', 'memoryMb', 'pids', 'tmpMb']) need(positiveNumber(sandbox?.[key]), `sandbox.${key} must be a positive number.`);
+  need(positiveNumber(sandbox?.cpus), 'sandbox.cpus must be a positive number.');
+  for (const key of ['memoryMb', 'pids', 'tmpMb']) need(positiveInteger(sandbox?.[key]), `sandbox.${key} must be a positive integer.`);
   const deps = config.dependencies;
   need(typeof deps?.requestFile === 'string' && deps.requestFile !== '', 'dependencies.requestFile is required.');
   need(positiveNumber(deps?.minVersionAgeDays) && deps.minVersionAgeDays >= 7, 'dependencies.minVersionAgeDays must be at least 7.');
@@ -153,15 +167,17 @@ export function validateConfig(config) {
     need(typeof harness.family === 'string' && harness.family !== '', `harnesses.${name}.family is required.`);
     need(PINNED_IMAGE.test(String(harness.image ?? '')), `harnesses.${name}.image must be pinned by digest.`);
     need(Array.isArray(harness.command) && harness.command.length > 0 && harness.command.every((part) => typeof part === 'string') && !String(harness.command[0]).startsWith('-'), `harnesses.${name}.command must be a list of strings starting with a program.`);
-    need(Object.keys(harness.env ?? {}).every((key) => /^[A-Z][A-Z0-9_]*$/.test(key)), `harnesses.${name}.env must map environment variable names to templates.`);
-    need(harness.provider in (config.providers ?? {}), `harnesses.${name}.provider must name a configured provider.`);
+    need(isPlainObject(harness.env ?? {}) && Object.keys(harness.env ?? {}).every((key) => /^[A-Z][A-Z0-9_]*$/.test(key)), `harnesses.${name}.env must map environment variable names to templates.`);
+    need(typeof harness.provider === 'string' && Object.hasOwn(config.providers, harness.provider), `harnesses.${name}.provider must name a configured provider.`);
+    need(isPlainObject(harness.env ?? {}) && Object.values(harness.env ?? {}).every((value) => typeof value === 'string'), `harnesses.${name}.env values must be strings.`);
+    need(harness.tokens === undefined || (typeof harness.tokens?.file === 'string' && /^[\w.-]+$/.test(harness.tokens.file) && Array.isArray(harness.tokens?.fields) && harness.tokens.fields.every((field) => typeof field === 'string')), `harnesses.${name}.tokens must be {file, fields}.`);
   }
   need(Array.isArray(config.routing), 'routing must be a list.');
   (Array.isArray(config.routing) ? config.routing : []).forEach((entry, index) => {
     const route = entry ?? {};
     need(STEPS.includes(route.step), `routing[${index}].step is unknown.`);
     need(Array.isArray(route.levels) && route.levels.length > 0 && route.levels.every((level) => LEVELS.includes(level)), `routing[${index}].levels must list risk levels.`);
-    need(route.harness in (config.harnesses ?? {}), `routing[${index}].harness must name a configured harness.`);
+    need(typeof route.harness === 'string' && Object.hasOwn(config.harnesses, route.harness), `routing[${index}].harness must name a configured harness.`);
     need(typeof route.model === 'string' && route.model !== '', `routing[${index}].model is required.`);
     need(GRADES.includes(route.grade), `routing[${index}].grade must be A, B or C.`);
   });

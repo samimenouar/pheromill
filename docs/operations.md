@@ -90,7 +90,12 @@ families and a route for every step):
   the ruleset, for example `{ "id": <app id>, "type": "Integration" }`.
 
 Run `pheromill doctor`. It refuses an invalid configuration with every reason,
-and lists what still prevents autonomous work.
+a misspelt setting included, and lists what still prevents autonomous work.
+
+Then commit and push these files to the trunk. The services read the
+configuration, the prompts' rules and the ticket form from the trunk, never
+from your working copy: nothing you configured exists for them until it is
+merged.
 
 ## 3. Apply the repository settings
 
@@ -110,9 +115,12 @@ without calling the forge.
 ## 4. Run the services
 
 Create a GitHub App for the control zone with these repository permissions:
-Contents, Pull requests and Issues (read and write), Checks (read), and
-Workflows (write) only if agents may change files under `.github/`. Install it
-on the repository and note the App id and the installation id.
+Contents, Pull requests and Issues (read and write), and Checks (read).
+Install it on the repository and note the App id and the installation id.
+Without the Workflows permission, a change that edits a file under
+`.github/workflows/` cannot be published and stops at the owner; to let the
+factory publish such changes (they are CRITICAL), grant Workflows (write) to
+the App and set `PHEROMILL_GITHUB_WORKFLOWS=write` in `deploy/control.env`.
 
 ```sh
 sudo sh deploy/setup.sh                                  # state directories and the sandbox network
@@ -120,6 +128,8 @@ BASE_IMAGE=node@sha256:<digest> sh deploy/build.sh       # prints PHEROMILL_IMAG
 cp deploy/.env.example deploy/.env                       # image, repository, docker group id
 cp deploy/control.env.example deploy/control.env         # forge credential (control zone only)
 cp deploy/egress.env.example deploy/egress.env           # model keys (egress zone only)
+chmod 600 deploy/.env deploy/control.env deploy/egress.env
+# fill in the three files: each line is explained in its example
 # put the App private key in <PHEROMILL_HOME>/control/app-private-key.pem, mode 600, owner 10001
 docker compose -f deploy/compose.yaml up -d
 ```
@@ -135,16 +145,21 @@ token that can only read the repository: the runner and egress use it to fetch
 the trunk. Images are never pulled at run time and never referenced by tag:
 the base image is given by digest, and built images by identifier.
 
+`deploy/setup.sh` refuses a sandbox network that exists and is not internal.
+When it starts, the runner removes the sandboxes a previous run left behind.
+
 ## Day to day
 
 | Task | How |
 | --- | --- |
 | Give work to the factory | Open a ticket with the form, then add the label `factory:ready` |
-| Approve a change that passed every gate | Add the label `factory:approved` to its pull request |
+| Approve a change that passed every gate | Add the label `factory:approved` to its pull request. It approves the commit the gates passed, once; a later commit needs a new approval |
+| Reject a change that waits for approval | Relabel its ticket `factory:ready` to have it worked again, or close the ticket |
 | See why a ticket stopped | Read the comment on the ticket; it is labelled `factory:needs-owner` |
+| Restart a ticket that was sent back too often | Fix what the comment says, then label it `factory:ready` again: it gets a fresh allowance of reworks |
 | Stop everything now | Create the file `HALT` in the control state directory (see [security.md](security.md)) |
 | Check the record | `pheromill ledger verify <state>/ledger.jsonl` |
-| Check a patch by hand | `git diff main... \| pheromill risk - --gate` |
+| Check a patch by hand | `git diff --no-renames main... \| pheromill risk - --gate`. Advisory: the pipeline judges what git applies, this command reads the text you give it |
 | Compute delivery metrics | `pheromill metrics dora --deliveries F --changes F --from D --to D` |
 | See what is provisional | `pheromill check` lists every provisional item |
 | Raise the autonomy tier | Change `autonomy.tier` in the configuration, once the thresholds are met |

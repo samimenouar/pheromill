@@ -98,6 +98,8 @@ test('cli: risk classifies a patch and gates it', async () => {
   writeFileSync(join(directory, 'ok.patch'), fileDiff('src/a.js', { added: ['x'], status: 'added' }));
   const file = await run(['risk', 'ok.patch', '--gate'], { cwd: directory });
   assert.deepEqual([file.code, JSON.parse(file.out).level], [0, 'LOW']);
+  const flagFirst = await run(['risk', '--gate', 'ok.patch'], { cwd: directory });
+  assert.deepEqual([flagFirst.code, JSON.parse(flagFirst.out).level], [0, 'LOW'], 'a switch never swallows the operand that follows it');
 });
 
 test('cli: ledger verify detects tampering', async () => {
@@ -137,7 +139,7 @@ test('cli: settings prints the desired state offline, plans and applies with a t
   const calls = [];
   const fetch = async (url, init) => {
     calls.push(`${init.method} ${url.replace('https://api.github.com/repos/samimenouar/pheromill', '') || '/'}`);
-    const body = url.endsWith('/labels?per_page=100') ? desired.labels.slice(1) : url.endsWith('/rulesets?per_page=100') ? [] : { delete_branch_on_merge: true, allow_auto_merge: false };
+    const body = url.includes('/labels?') ? desired.labels.slice(1) : url.includes('/rulesets?') ? [] : { delete_branch_on_merge: true, allow_auto_merge: false };
     return { ok: true, status: 200, json: async () => body };
   };
   const plan = await run(['settings', 'plan'], { cwd: repository, env: { PHEROMILL_FORGE_TOKEN: 't' }, fetch });

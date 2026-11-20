@@ -17,10 +17,16 @@ export class MemoryLedger {
     this.entries.push(chainEntry(previous, type, data, this.clock.now().toISOString()));
   }
 
+  async appendOnce(type, identity, data) {
+    if (!this.entries.some((entry) => entry.type === type && entry.data.identity === identity)) await this.append(type, { ...data, identity });
+  }
+
   ofType(type) {
     return this.entries.filter((entry) => entry.type === type).map((entry) => entry.data);
   }
 }
+
+const STATE_LABELS = { later: 'factory:later', ready: 'factory:ready', in_progress: 'factory:in-progress', queued: 'factory:queued', rework: 'factory:rework', needs_owner: 'factory:needs-owner' };
 
 export class MemoryForge {
   constructor() {
@@ -29,19 +35,29 @@ export class MemoryForge {
     this.comments = [];
     /** Change requests a person labelled as approved. */
     this.approved = new Set();
+    /** Head commit of each change request; tests set it as a push would. */
+    this.heads = new Map();
   }
 
+  /** Approved change requests with the commit they point to, as a forge would report them. */
   async approvedChanges() {
-    return [...this.approved];
+    return [...this.approved].map((id) => ({ id, sha: this.heads.get(id) ?? null }));
+  }
+
+  async clearApproval(changeId) {
+    this.approved.delete(changeId);
   }
 
   async listTickets(label) {
-    return [...this.tickets.values()].filter((ticket) => ticket.labels.includes(label));
+    return [...this.tickets.values()].filter((ticket) => ticket.labels.includes(label) && !ticket.closed);
   }
 
+  /** Like a forge: the state label is swapped, other labels are kept, done and split close the ticket. */
   async setTicketState(id, state, note) {
     const ticket = this.tickets.get(id) ?? { id, labels: [] };
-    this.tickets.set(id, { ...ticket, state, note });
+    const kept = ticket.labels.filter((label) => !Object.values(STATE_LABELS).includes(label));
+    const labels = STATE_LABELS[state] ? [...kept, STATE_LABELS[state]] : kept;
+    this.tickets.set(id, { ...ticket, labels, state, note, closed: state === 'done' || state === 'split' });
   }
 
   async createTicket(ticket) {
@@ -50,8 +66,10 @@ export class MemoryForge {
     return { id };
   }
 
+  /** A ticket that comes back reuses its open change request, as on a forge. */
   async openChange(change) {
-    const id = `change-${this.changes.size + 1}`;
+    const existing = [...this.changes.values()].find((other) => other.branch === change.branch);
+    const id = existing?.id ?? `change-${this.changes.size + 1}`;
     this.changes.set(id, { id, ...change });
     return { id };
   }
@@ -60,8 +78,11 @@ export class MemoryForge {
     this.comments.push({ changeId, body });
   }
 
-  async setLabels(changeId, labels) {
-    this.changes.set(changeId, { ...this.changes.get(changeId), labels });
+  /** Risk labels go on a change request or, before one exists, on the ticket itself. */
+  async setLabels(id, labels) {
+    const target = this.changes.has(id) ? this.changes : this.tickets;
+    const current = target.get(id) ?? { id, labels: [] };
+    target.set(id, { ...current, labels: [...current.labels.filter((label) => !label.startsWith('risk:')), ...labels] });
   }
 }
 

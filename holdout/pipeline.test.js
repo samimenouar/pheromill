@@ -15,12 +15,14 @@ const DIGEST = `sha256:${'a'.repeat(64)}`;
 const ALL = ['LOW', 'HIGH', 'CRITICAL'];
 const STEPS = ['specify', 'implement', 'review', 'security_review', 'test_guard_review', 'refute', 'arbitrate'];
 
-function factoryConfig({ tier = 1, familiesOf = { alpha: 'anthropic', beta: 'openai' } } = {}) {
+function factoryConfig({ tier = 1, familiesOf = { alpha: 'anthropic', beta: 'openai' }, routed = () => true } = {}) {
   const harnesses = {};
   for (const [name, family] of Object.entries(familiesOf)) harnesses[name] = { family, image: DIGEST, command: ['agent'], provider: 'p' };
-  const routing = STEPS.flatMap((step) => Object.keys(harnesses).map((harness) => ({ step, levels: ALL, harness, model: `${harness}-model`, grade: 'A' })));
+  const routing = STEPS.flatMap((step) => Object.keys(harnesses).filter((harness) => routed(step, harness)).map((harness) => ({ step, levels: ALL, harness, model: `${harness}-model`, grade: 'A' })));
   return testConfig({ providers: { p: { baseUrl: 'https://p.example', authHeader: 'x', keyEnv: 'P_KEY', paths: ['/v1'] } }, harnesses, routing, autonomy: { tier } });
 }
+
+const testLimits = (limits) => ({ ...factoryConfig(), limits: { ...factoryConfig().limits, ...limits } });
 
 const criteria = ['A visitor sees the greeting'];
 const ticket = (overrides = {}) => ({
@@ -38,6 +40,7 @@ const ticket = (overrides = {}) => ({
 
 const approve = { report: { findings: [], criteria: { [criteria[0]]: true } } };
 const goodPatch = fileDiff('src/app/greeting.js', { added: ['export const greet = () => "hello";'], status: 'added' });
+const attemptPatch = (attempt) => fileDiff('src/app/greeting.js', { added: [`export const greet = () => "hello ${attempt}";`], status: 'added' });
 const holdoutPatch = fileDiff('holdout/greeting.test.js', { added: ['assert.equal(greet(), "hello")'], status: 'added' });
 
 function baseScript(overrides = {}) {
@@ -53,7 +56,7 @@ function baseScript(overrides = {}) {
   };
 }
 
-async function run(script, { config = factoryConfig(), checks, registry, ticketOverrides, externalReview } = {}) {
+async function run(script, { config = factoryConfig(), checks, registry, ticketOverrides, externalReview, halted } = {}) {
   const ports = {
     runner: new ScriptedRunner(script),
     vcs: new MemoryVcs(),
@@ -63,6 +66,7 @@ async function run(script, { config = factoryConfig(), checks, registry, ticketO
     ledger: new MemoryLedger(),
     clock: { now: () => new Date('2026-11-20T00:00:00Z') },
     externalReview,
+    halted,
   };
   const result = await runTicket(ticket(ticketOverrides), config, ports);
   return { result, ...ports, steps: ports.runner.jobs.map((job) => `${job.step}:${job.route.family}`) };
@@ -192,7 +196,7 @@ test('pipeline: a dependency is requested, never installed; a young package is r
 test('pipeline: the same failure three times stops the author and hands the ticket to another family', async () => {
   const red = { status: 'fail', signature: 'greeting.test.js: expected hello' };
   const checks = new ScriptedChecks((sha, call) => (call <= 3 ? red : { status: 'pass', signature: null }));
-  const { result, steps, ledger } = await run(baseScript(), { checks });
+  const { result, steps, ledger } = await run(baseScript({ implement: (job, attempt) => ({ patch: attemptPatch(attempt) }) }), { checks });
   assert.equal(result.outcome, 'queued');
   assert.deepEqual(ledger.ofType('arbitration').map((entry) => [entry.trigger, entry.action]), [['same_error_three_times', 'reassign']]);
   const implementers = steps.filter((step) => step.startsWith('implement'));
@@ -202,7 +206,7 @@ test('pipeline: the same failure three times stops the author and hands the tick
 
 test('pipeline: a ticket is escalated once; the second time the owner decides', async () => {
   const checks = new ScriptedChecks(() => ({ status: 'fail', signature: 'always red' }));
-  const { result, ledger, steps } = await run(baseScript(), { checks });
+  const { result, ledger, steps } = await run(baseScript({ implement: (job, attempt) => ({ patch: attemptPatch(attempt) }) }), { checks });
   assert.equal(result.outcome, 'needs_owner');
   assert.deepEqual(ledger.ofType('arbitration').map((entry) => entry.action), ['reassign', 'ask_owner']);
   assert.equal(steps.filter((step) => step.startsWith('implement')).length, 6);
@@ -331,4 +335,119 @@ test('pipeline: a patch that does not apply, or that says one thing and does ano
 test('pipeline: a ticket whose form is ambiguous is not dispatched', async () => {
   const { result } = await run(baseScript(), { ticketOverrides: { wellFormed: false } });
   assert.equal(result.outcome, 'invalid');
+});
+
+test('pipeline: an author who hands in the same patch again has changed nothing', async () => {
+  const checks = new ScriptedChecks(() => ({ status: 'fail', signature: 'always red' }));
+  const { ledger, steps } = await run(baseScript(), { checks });
+  assert.deepEqual(ledger.ofType('arbitration').map((entry) => entry.trigger), ['no_change_twice', 'no_change_twice']);
+  assert.equal(steps.filter((step) => step.startsWith('implement')).length, 6);
+});
+
+test('pipeline: a finding that comes back after it was refuted is never dropped; the arbiter decides', async () => {
+  const real = { category: 'bug', path: 'src/app/greeting.js', message: 'returns the wrong greeting', severity: 'blocking' };
+  const disputed = { category: 'bug', path: 'src/app/greeting.js', message: 'race condition on line 12', severity: 'blocking' };
+  const again = { ...disputed, message: 'race condition on line 40' };
+  const criteriaMet = approve.report.criteria;
+  const script = baseScript({
+    implement: (job, attempt) => ({ patch: attemptPatch(attempt) }),
+    review: (job, attempt) => ({ report: { findings: attempt === 1 ? [real, disputed] : [again], criteria: criteriaMet } }),
+    refute: () => ({ report: { verdicts: { [fingerprint(real)]: 'confirmed', [fingerprint(disputed)]: 'refuted' } } }),
+  });
+  const { result, ledger, runner } = await run(script);
+  assert.equal(result.outcome, 'needs_owner', 'a reviewer and a refuter who disagree twice are not overruled by silence');
+  assert.deepEqual(ledger.ofType('arbitration').map((entry) => [entry.trigger, entry.detail]), [['refuted_finding_returned', fingerprint(disputed)]]);
+  assert.equal(ledger.ofType('gates_passed').length, 0);
+  assert.equal(runner.jobs.filter((job) => job.step === 'refute').length, 1, 'a settled finding is not argued a second time');
+
+  const reassigned = await run({ ...script, arbitrate: () => ({ report: { action: 'reassign' } }), review: (job, attempt) => ({ report: { findings: attempt === 1 ? [real, disputed] : [disputed], criteria: criteriaMet } }) });
+  assert.equal(reassigned.result.outcome, 'queued');
+  assert.deepEqual(reassigned.ledger.ofType('arbitration').map((entry) => entry.action), ['reassign']);
+  assert.equal(reassigned.runner.jobs.filter((job) => job.step === 'refute').length, 2, 'on the change of another author the same finding is judged afresh');
+});
+
+test('pipeline: the size of a change counts its hidden scenarios', async () => {
+  const scenarios = fileDiff('holdout/greeting.test.js', { added: Array.from({ length: 300 }, (_, i) => `assert.ok(${i});`), status: 'added' });
+  const implementation = fileDiff('src/app/greeting.js', { added: Array.from({ length: 150 }, (_, i) => `line ${i}`), status: 'added' });
+  const outgrown = await run(baseScript({ specify: () => ({ patch: scenarios }), implement: () => ({ patch: implementation }) }));
+  assert.deepEqual(outgrown.ledger.ofType('arbitration').map((entry) => [entry.trigger, entry.detail]), [['size_exceeded', '450 changed lines, 2 points.']]);
+  assert.equal(outgrown.vcs.published.length, 0);
+
+  const config = testLimits({ midFlightChangedLines: 1000 });
+  const refused = await run(baseScript({ specify: () => ({ patch: scenarios }), implement: (job, attempt) => ({ patch: attempt === 1 ? fileDiff('src/app/greeting.js', { added: Array.from({ length: 201 }, (_, i) => `line ${i}`), status: 'added' }) : goodPatch }) }), { config });
+  assert.deepEqual(refused.ledger.ofType('patch_refused').map((entry) => entry.rules), [['too_large']]);
+  assert.match(refused.runner.jobs.filter((job) => job.step === 'implement')[1].input.feedback[0], /501 changed lines \(300 of them in hidden scenarios\)/);
+  assert.equal(refused.result.outcome, 'queued');
+});
+
+test('pipeline: a patch the gate refused is not the base of the next attempt', async () => {
+  const lock = fileDiff('package-lock.json', { added: ['{}'], status: 'added' });
+  const { runner, result } = await run(baseScript({ implement: (job, attempt) => ({ patch: attempt === 1 ? lock : goodPatch }) }));
+  assert.equal(result.outcome, 'queued');
+  assert.deepEqual(runner.jobs.filter((job) => job.step === 'implement').map((job) => job.patches), [[], []]);
+});
+
+test('pipeline: whoever wrote the scenarios does not review them when a third family exists', async () => {
+  const three = { alpha: 'anthropic', beta: 'openai', gamma: 'google' };
+  const onlyBetaSpecifies = (step, harness) => step !== 'specify' || harness === 'beta';
+  const preferred = await run(baseScript(), { config: factoryConfig({ familiesOf: three, routed: onlyBetaSpecifies }) });
+  assert.deepEqual(preferred.steps, ['specify:openai', 'implement:openai', 'review:anthropic'], 'the family that wrote the scenarios implements, so another one reviews both');
+
+  const alphaImplements = (step, harness) => onlyBetaSpecifies(step, harness) && (step !== 'implement' || harness === 'alpha');
+  const third = await run(baseScript(), { config: factoryConfig({ familiesOf: three, routed: alphaImplements }) });
+  assert.deepEqual(third.steps, ['specify:openai', 'implement:anthropic', 'review:google']);
+  assert.equal(third.ledger.ofType('gates_passed')[0].scenariosReviewedByAnotherFamily, true);
+
+  const two = await run(baseScript(), { config: factoryConfig({ routed: alphaImplements }) });
+  assert.deepEqual(two.steps, ['specify:openai', 'implement:anthropic', 'review:openai']);
+  assert.equal(two.ledger.ofType('gates_passed')[0].scenariosReviewedByAnotherFamily, false, 'with two families the ledger says the scenarios were reviewed by their own family');
+});
+
+test('pipeline: the external tool examines the commit the reviews let through; when its budget is spent the owner decides', async () => {
+  const core = (attempt) => fileDiff('src/domain/rules.js', { added: [`export const x = ${attempt};`], status: 'added' });
+  const leak = { category: 'security', path: 'src/domain/rules.js', message: 'secret in a log line', severity: 'blocking' };
+  const seen = [];
+  const externalReview = async ({ sha }) => {
+    seen.push(sha);
+    return { findings: [leak] };
+  };
+  const script = baseScript({
+    implement: (job, attempt) => ({ patch: core(attempt) }),
+    review: (job, attempt) => (attempt === 1 ? { report: { findings: [], criteria: {} } } : approve),
+    refute: () => ({ report: { verdicts: { [fingerprint(leak)]: 'confirmed' } } }),
+  });
+  const { result, ledger, vcs, runner } = await run(script, { externalReview, config: factoryConfig({ tier: 3 }), ticketOverrides: { likelyFiles: ['src/domain/rules.js'] } });
+  assert.deepEqual(seen, [vcs.published[1].sha], 'the pass is not spent on a commit the reviews already sent back');
+  assert.deepEqual(runner.jobs.filter((job) => job.step === 'implement')[2].input.feedback, ['security in src/domain/rules.js: secret in a log line']);
+  assert.equal(result.outcome, 'needs_owner', 'even at the highest tier');
+  assert.match(result.reason, /not examined by the external tool/);
+  assert.equal(result.gatesPassed, true);
+  const [passed] = ledger.ofType('gates_passed');
+  assert.deepEqual([passed.gates.includes('external_tool_pass'), passed.missed], [false, ['external_tool_pass']], 'the ledger never lists a gate that did not run on the commit');
+});
+
+test('pipeline: an arbiter that crashed proposes nothing, and it is told the limits it must respect', async () => {
+  const checks = new ScriptedChecks(() => ({ status: 'fail', signature: 'always red' }));
+  const script = baseScript({ implement: (job, attempt) => ({ patch: attemptPatch(attempt) }), arbitrate: () => ({ report: { error: 'timeout', action: 'ask_owner' } }) });
+  const { ledger, runner } = await run(script, { checks });
+  assert.equal(ledger.ofType('arbitration')[0].action, 'reassign', 'the deterministic default applies');
+  const { limits } = runner.jobs.find((job) => job.step === 'arbitrate').input;
+  assert.deepEqual([limits.maxChangedLines, limits.maxPoints, limits.maxChildren], [500, 5, 5]);
+});
+
+test('pipeline: what the scenarios assume about the interface is passed to the implementer, the scenarios are not', async () => {
+  const { runner } = await run(baseScript({ specify: () => ({ patch: holdoutPatch, report: { assumedInterfaces: ['greet() exported from src/app/greeting.js', 7] } }) }));
+  const job = runner.jobs.find((entry) => entry.step === 'implement');
+  assert.deepEqual(job.input.assumedInterfaces, ['greet() exported from src/app/greeting.js']);
+  assert.deepEqual(job.hidePaths, ['holdout/**']);
+});
+
+test('pipeline: a halt stops a ticket before its next step and before anything is published', async () => {
+  let asked = 0;
+  const halted = async () => (asked += 1) > 2; // specify and implement run, then the owner halts
+  const { result, vcs, steps, ledger } = await run(baseScript(), { halted });
+  assert.equal(result.outcome, 'halted');
+  assert.deepEqual(steps, ['specify:anthropic', 'implement:anthropic']);
+  assert.equal(vcs.published.length, 0);
+  assert.equal(ledger.ofType('ticket_outcome')[0].outcome, 'halted');
 });

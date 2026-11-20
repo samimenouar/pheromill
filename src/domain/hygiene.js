@@ -7,8 +7,8 @@
  */
 import { matchesAny } from './glob.js';
 
-// Letters outside basic Latin signal non-English prose; symbols and arrows are fine.
-const NON_ENGLISH_LETTER = /[\u00c0-\u024f\u0370-\u03ff\u0400-\u04ff\u0590-\u06ff\u3040-\u30ff\u4e00-\u9fff]/;
+// Any letter outside ASCII signals non-English prose; symbols, arrows and digits are fine.
+const NON_ENGLISH_LETTER = /(?![a-zA-Z])\p{L}/u;
 
 const SECRET_PATTERNS = [
   ['private_key', /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/],

@@ -26,7 +26,8 @@ export class NpmRegistry {
       packageCreatedAt: document.time?.created ?? null,
       versionCount: Object.keys(document.versions).length,
       license,
-      installScripts: LIFECYCLE.filter((name) => typeof version.scripts?.[name] === 'string'),
+      // A package with a binding.gyp and no install script gets an implicit native build at install time.
+      installScripts: [...LIFECYCLE.filter((name) => typeof version.scripts?.[name] === 'string'), ...(version.gypfile === true ? ['native-build'] : [])],
       deprecated: typeof version.deprecated === 'string' && version.deprecated !== '',
     };
   }

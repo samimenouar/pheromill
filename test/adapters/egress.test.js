@@ -162,3 +162,51 @@ test('gateway: a grant works for its own provider only, and never without a gran
   const unset = await issueGrant(grants, { role: 'author', runId: 'r10', provider: 'unset', ttlSeconds: 60 }, now);
   assert.equal((await call('/unset/v1', { 'x-api-key': unset })).status, 503);
 });
+
+test('gateway: only POST is forwarded', async () => {
+  const token = await issueGrant(grants, { role: 'author', runId: 'r10', provider: 'anthropic', ttlSeconds: 60 }, now);
+  const status = await new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: gatewayPort, path: '/anthropic/v1/messages', headers: { 'x-api-key': token } }, (response) => resolve(response.statusCode)).on('error', reject);
+  });
+  assert.equal(status, 405, 'listing or deleting what a provider stores is not part of a step');
+});
+
+test('egress: a tunnel carries the bytes sent with the request, and never outlives or outruns its grant', async () => {
+  const echo = net.createServer((socket) => socket.on('data', (chunk) => socket.write(`echo:${chunk}`)));
+  const echoPort = await listen(echo);
+  let duringLookup = async () => {};
+  const proxy = createEgressProxy({
+    egress: { author: ['registry.example.org'] },
+    grants,
+    clock,
+    report: (event) => events.push(event),
+    resolve: async () => {
+      await duringLookup();
+      return ['93.184.216.34'];
+    },
+    connect: () => net.connect(echoPort, '127.0.0.1'),
+  });
+  const port = await listen(proxy);
+  servers.push(echo, proxy);
+  const open = (token, early = '') =>
+    new Promise((resolve) => {
+      const started = Date.now();
+      const socket = net.connect(port, '127.0.0.1');
+      let data = '';
+      const auth = `Proxy-Authorization: Basic ${Buffer.from(`step:${token}`).toString('base64')}\r\n`;
+      socket.on('connect', () => socket.write(`CONNECT registry.example.org:443 HTTP/1.1\r\nHost: registry.example.org\r\n${auth}\r\n${early}`));
+      socket.on('data', (chunk) => (data += chunk));
+      socket.on('close', () => resolve({ data, ms: Date.now() - started }));
+      socket.on('error', () => resolve({ data, ms: Date.now() - started }));
+    });
+
+  const brief = await issueGrant(grants, { role: 'author', runId: 'r11', ttlSeconds: 0.3 }, now);
+  const { data, ms } = await open(brief, 'client hello');
+  assert.match(data, /^HTTP\/1\.1 200/);
+  assert.match(data, /echo:client hello$/, 'a client that does not wait for the answer loses nothing');
+  assert.ok(ms >= 200 && ms < 5000, `the tunnel was closed when the grant expired (${ms} ms)`);
+
+  const racing = await issueGrant(grants, { role: 'author', runId: 'r12', ttlSeconds: 60 }, now);
+  duringLookup = () => revokeGrant(grants, racing);
+  assert.match((await open(racing)).data, /^HTTP\/1\.1 407/, 'a grant revoked while the name was being resolved opens nothing');
+});

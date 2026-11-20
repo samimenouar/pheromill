@@ -18,6 +18,9 @@ Users and administrators are assumed to have no technical background.
 | Decisions | Each significant choice is recorded and reversible | `docs/decisions/` in the product |
 | Language | English only, written as if public | `pheromill check`, called from the verify command |
 
+The honesty check finds what was marked provisional. A fact that was invented
+and not marked is caught only by review.
+
 The rules are in the template `AGENTS.md` today. The template's verify command
 is a stub that fails until the product defines it: each product wires its own
 tools, and the two `pheromill check` calls, into it. Reference gate scripts

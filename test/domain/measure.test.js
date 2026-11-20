@@ -289,3 +289,48 @@ test('settings: the plan lists only what differs from the desired state', () => 
   const excluded = { ...richer, conditions: { ref_name: { include: ['refs/heads/main'], exclude: ['refs/heads/main'] } } };
   assert.deepEqual(planSettings(desired, { ...applied, rulesets: [excluded] }).map((op) => op.op), ['update_ruleset']);
 });
+
+test('findings: two findings that differ only by numbers each get their own identity and verdict', () => {
+  const finding = (line) => ({ category: 'bug', path: 'src/a.js', message: `off by one on line ${line}`, severity: 'blocking' });
+  const { findings } = parseFindings({ findings: [finding(12), finding(40), finding(7)] });
+  const base = fingerprint(finding(1));
+  assert.deepEqual(findings.map((item) => item.fingerprint), [base, `${base}-2`, `${base}-3`]);
+  assert.match(parseVerdicts({ verdicts: { [base]: 'refuted' } }, findings).errors.join(' '), new RegExp(`${base}-2 has no valid verdict`), 'refuting one does not refute its neighbour');
+});
+
+test('proofs: evidence names a whole test title; a malformed registry is reported, never thrown on', () => {
+  const read = () => "test('risk: fails closed on a path it cannot parse', () => {})";
+  const claim = (test) => ({ claims: [{ id: 'risk', area: 'Risk', claim: 'Fails closed', status: 'PROVEN', evidence: [{ file: 'test/a.test.js', test }] }] });
+  assert.deepEqual(validateRegistry(claim('risk: fails closed on a path it cannot parse'), read), []);
+  assert.match(validateRegistry(claim('risk: fails closed'), read)[0], /not found/, 'the start of a title is not the title');
+  const broken = { claims: [null, 'text', { id: 'x', area: 'A', claim: 'c', status: 'PROVEN', evidence: 'everywhere' }, { id: 'y', area: 'A', claim: 'c', status: 'PROVEN', evidence: [{ file: 7 }] }] };
+  const problems = validateRegistry(broken, read);
+  for (const fragment of ['(missing id): id must be a slug', 'x: PROVEN requires evidence', 'y: each evidence needs a file and a test']) assert.ok(problems.some((p) => p.includes(fragment)), fragment);
+  assert.ok(validateRegistry({}, read).length > 0);
+});
+
+test('config: sections must be objects, misspelt keys are errors, and hostile patterns are refused', () => {
+  const problemsOf = (override) => validateConfig(testConfig(override));
+  for (const section of ['paths', 'limits', 'budget', 'sandbox', 'queue', 'autonomy', 'egress']) {
+    assert.deepEqual(validateConfig({ ...testConfig(), [section]: null }), [`${section} must be an object.`], section);
+  }
+  assert.ok(problemsOf({ limits: { maxChangedLine: 100 } }).includes('Unknown setting "limits.maxChangedLine".'));
+  assert.ok(problemsOf({ sandbox: { network: 'host' } }).some((p) => p.startsWith('Unknown setting "sandbox.network"')));
+  assert.equal(validateConfig({ ...testConfig(), toString: {} })[0], 'Unknown setting "toString".', 'inherited names are not settings');
+  assert.ok(problemsOf({ paths: { core: ['src/*a*a*b'] } }).some((p) => p.includes('at most two wildcards')));
+  assert.ok(problemsOf({ paths: { core: [`src/${'a'.repeat(200)}`] } }).some((p) => p.includes('at most two wildcards')));
+  assert.deepEqual(problemsOf({ paths: { core: ['src/**/a*b*.js'] } }), []);
+  assert.ok(problemsOf({ paths: { tests: [] } }).some((p) => p.includes('paths.tests must name where tests live')));
+  assert.ok(problemsOf({ budget: { sandboxSecondsPerPoint: 86401 } }).some((p) => p.includes('from 1 to 86400')));
+  assert.ok(problemsOf({ sandbox: { pids: 12.5 } }).some((p) => p.includes('sandbox.pids must be a positive integer')));
+
+  const digest = `sha256:${'f'.repeat(64)}`;
+  const provider = { baseUrl: 'https://api.example.com', authHeader: 'x-api-key', keyEnv: 'EXAMPLE_API_KEY', paths: ['/v1/messages'] };
+  const harness = (extra) => testConfig({ providers: { p: provider }, harnesses: { alpha: { family: 'f', image: digest, command: ['agent'], provider: 'p', ...extra } } });
+  assert.deepEqual(validateConfig(harness({ env: { MODEL: '{model}' }, tokens: { file: 'usage.json', fields: ['input', 'output'] } })), []);
+  assert.ok(validateConfig(harness({ provider: 'constructor' })).some((p) => p.includes('provider must name a configured provider')), 'a name every object inherits is not a provider');
+  assert.ok(validateConfig(harness({ env: { MODEL: 7 } })).some((p) => p.includes('env values must be strings')));
+  assert.ok(validateConfig(harness({ tokens: { file: '../usage.json', fields: [] } })).some((p) => p.includes('tokens must be {file, fields}')));
+  const routed = { ...harness({}), routing: [{ step: 'implement', levels: ['LOW'], harness: 'hasOwnProperty', model: 'm', grade: 'C' }] };
+  assert.ok(validateConfig(routed).some((p) => p.includes('harness must name a configured harness')));
+});

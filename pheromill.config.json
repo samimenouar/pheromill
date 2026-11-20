@@ -40,7 +40,11 @@
     "holdout": [
       "holdout/**"
     ],
-    "queueOwned": [],
+    "queueOwned": [
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock"
+    ],
     "snapshots": [],
     "thresholds": [
       "scripts/verify.js",

@@ -67,18 +67,25 @@ repository; agent steps are prompts in `prompts/`.
 | 2 | specify | agent | Writes the hidden acceptance scenarios from the ticket alone; it may only add files |
 | 3 | implement | agent | Writes the change, without access to the scenarios |
 | 4 | inspect | deterministic | Applies the patch and takes git's own account of what it changes |
-| 5 | patch gate | deterministic | Refuses structural tricks, oversized changes, holdout or queue-owned files, refused dependencies |
+| 5 | patch gate | deterministic | Refuses structural tricks, changes over the size limit (scenarios included), holdout or queue-owned files, refused dependencies |
 | 6 | risk | deterministic | Computes LOW, HIGH or CRITICAL from the touched paths; a change riskier than routed is sent back |
 | 7 | publish | deterministic | Commits the patch on a branch from the control zone |
 | 8 | checks | deterministic | Waits for the project's verify command, hidden scenarios included |
-| 9 | review | agent | Another model family looks for defects and checks each criterion |
-| 10 | refute | agent | Another family than the author tries to disprove each finding; only an explicit refutation drops one |
+| 9 | review | agent | A family that did not write the implementation looks for defects and checks each criterion |
+| 10 | refute | agent | A family that did not write the implementation tries to disprove each finding; only an explicit refutation drops one, and a finding that comes back afterwards goes to the arbiter |
 | 11 | decide | deterministic | Sends back, escalates, waits for the owner's approval, or enqueues |
 | 12 | merge queue | deterministic | Tests on the future trunk, lands by fast-forward |
 
 Steps 3 to 10 repeat for at most two correction rounds, each starting from the
-previous attempt. Then a loop trigger fires and the arbiter decides (see
-[metrics.md](metrics.md)).
+last attempt that passed the patch gate. Then a loop trigger fires and the
+arbiter decides (see [metrics.md](metrics.md)).
+
+Who reviews what: the specify step and the implement step run in the same
+family when the routes allow it, so that another family reviews both the
+scenarios and the code. With three families the reviewer wrote neither. When
+the routes force the scenarios and the code into different families and no
+third one exists, the scenarios are reviewed by the family that wrote them,
+and the ledger says so (`scenariosReviewedByAnotherFamily: false`).
 
 ## Ports and adapters
 
@@ -126,7 +133,7 @@ at start and must be restarted to apply a change.
 
 | Term | Meaning |
 | --- | --- |
-| Owner | The person accountable for the repository; the only one who can label tickets, approve changes and edit autonomy |
+| Owner | The person accountable for the repository. On the forge, anyone allowed to label issues and change requests can mark a ticket ready or approve a change: keep that right to the people who may decide |
 | Ticket | An issue filed with the ticket form: one thing a user can see or test |
 | Change | The patch for one ticket, published as a change request (a pull request on GitHub) |
 | Harness | A command-line coding agent (the program that drives a model) |
@@ -138,6 +145,6 @@ at start and must be restarted to apply a change.
 | Checks | The result of the project's verify command on a commit, as reported by the forge |
 | Hidden scenarios | Acceptance tests in the holdout directory, invisible to the implementing agent |
 | Correction round | The author is sent back with feedback; at most two per attempt |
-| Rework | The ticket goes back to the start under the same number; at most two |
+| Rework | The ticket goes back to the start under the same number; after two the owner decides, and relabelling it ready gives it a fresh allowance |
 | Eviction | A change is removed from the merge queue and its ticket goes to rework |
 | Candidate | A commit the queue builds: the trunk plus the changes ahead in the queue |

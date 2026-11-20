@@ -33,7 +33,7 @@ function sections(body) {
 function listItems(text) {
   return text
     .split('\n')
-    .map((line) => line.replace(/^\s*(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, '').trim())
+    .map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, '').trim())
     .filter((line) => line !== '' && line !== '_No response_');
 }
 
@@ -96,12 +96,12 @@ export function validateTicket(ticket, config) {
   if (!Number.isInteger(ticket?.points) || ticket.points < minPoints || ticket.points > maxPoints) {
     problems.push(`Points must be an integer from ${minPoints} to ${maxPoints}.`);
   }
-  if (!strings(ticket?.acceptanceCriteria) || ticket.acceptanceCriteria.length === 0) {
+  if (!strings(ticket?.acceptanceCriteria) || ticket.acceptanceCriteria.length === 0 || ticket.acceptanceCriteria.some((item) => /[\r\n]/.test(item))) {
     problems.push('At least one acceptance criterion a user can see or test is required.');
   }
   if (!strings(ticket?.likelyFiles) || ticket.likelyFiles.length === 0) {
     problems.push('At least one likely file or glob is required to schedule the ticket without overlap.');
-  } else if (!ticket.likelyFiles.every((file) => LIKELY_FILE.test(file))) {
+  } else if (!ticket.likelyFiles.every((file) => LIKELY_FILE.test(file) && !file.split('/').some((segment) => segment === '..' || segment === '.' || segment === ''))) {
     problems.push('Likely files must be plain paths or globs, one per line.');
   }
   return problems;

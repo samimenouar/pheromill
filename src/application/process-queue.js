@@ -6,6 +6,10 @@
  * so the commit that lands is the commit that was tested. A candidate is
  * only usable while it still descends, link by link, from the trunk head:
  * if the trunk moved under it, it is rebuilt and tested again.
+ *
+ * A tick may be interrupted anywhere. The next one starts from the saved
+ * state and from what the trunk really contains, so replaying it lands,
+ * evicts and records each change exactly once.
  */
 import { dequeue, enqueue, forget, plan, recordResult, settle } from '../domain/merge-queue.js';
 
@@ -16,7 +20,8 @@ import { dequeue, enqueue, forget, plan, recordResult, settle } from '../domain/
  *   awaiting?: object}} store persisted queue state
  * @param {{project: {trunk: string}}} config
  * @param {{vcs: import('./ports.js').Vcs, checks: import('./ports.js').Checks,
- *   forge: import('./ports.js').Forge, ledger: import('./ports.js').Ledger}} ports
+ *   forge: import('./ports.js').Forge, ledger: import('./ports.js').Ledger,
+ *   halted?: () => Promise<boolean>}} ports
  * @returns {Promise<typeof store>} the next store
  */
 export async function queueTick(store, config, ports) {
@@ -27,18 +32,31 @@ export async function queueTick(store, config, ports) {
   const changes = { ...store.changes };
 
   const sendBack = async (id, reason) => {
-    await ledger.append('evict', { change: id, ticket: changes[id].ticketId, reason });
-    await ledger.append('ticket_outcome', { ticket: changes[id].ticketId, outcome: 'rework', reason });
+    // The epoch tells two stays of the same commit in the queue apart; a replayed tick sees the same one.
+    const eviction = `${id}@${changes[id].sha}#e${store.queue.epoch}`;
+    await ledger.appendOnce('evict', eviction, { change: id, ticket: changes[id].ticketId, reason });
+    await ledger.appendOnce('ticket_outcome', `evict:${eviction}`, { ticket: changes[id].ticketId, outcome: 'rework', reason });
     await forge.setTicketState(changes[id].ticketId, 'rework', reason);
     delete changes[id];
   };
   const byCount = () => Object.entries(candidates).sort((a, b) => a[1].count - b[1].count);
 
   // 0. Drop every candidate that no longer chains from the trunk head (the
-  //    trunk moved outside the queue, or its parent was rebuilt).
-  let link = await vcs.head(trunk);
+  //    trunk moved outside the queue, or its parent was rebuilt). A candidate
+  //    the trunk already contains was landed by a tick that did not finish:
+  //    it passed, and step 2 completes its bookkeeping without landing it again.
+  const start = await vcs.head(trunk);
+  let link = start;
   for (const [key, candidate] of byCount()) {
-    if (candidate.sha === link) continue; // already landed by an interrupted tick
+    if (await vcs.isAncestor(candidate.sha, start)) {
+      if (candidate.count <= queue.landed.length) {
+        delete candidates[key]; // a shorter prefix of what already landed: nothing left to do with it
+      } else if (!candidate.reported) {
+        queue = recordResult(queue, key, 'pass');
+        candidates[key] = { ...candidate, reported: true };
+      }
+      continue;
+    }
     if (candidate.parent === link) {
       link = candidate.sha;
     } else {
@@ -63,17 +81,16 @@ export async function queueTick(store, config, ports) {
     }
   }
 
-  // 2. Apply every decision the results allow.
+  // 2. Apply every decision the results allow, unless the owner halted the factory.
+  if (await ports.halted?.()) return { ...store, queue, candidates, changes };
   const epoch = queue.epoch;
   const settled = settle(queue);
   queue = settled.state;
   for (const action of settled.actions) {
     if (action.type === 'merge') {
       const { sha } = candidates[action.key];
-      if ((await vcs.head(trunk)) !== sha) {
-        await vcs.fastForward(trunk, sha);
-        await ledger.append('merge', { changes: action.changes, sha });
-      }
+      if (!(await vcs.isAncestor(sha, await vcs.head(trunk)))) await vcs.fastForward(trunk, sha);
+      await ledger.appendOnce('merge', sha, { changes: action.changes, sha });
       for (const id of action.changes) {
         await forge.setTicketState(changes[id].ticketId, 'done', `Landed in ${sha}.`);
         delete changes[id];

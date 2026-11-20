@@ -18,14 +18,18 @@ are marked provisional and listed by `pheromill check`.
 
 ## D-02 The reviewer comes from another model family
 
-- **Decision.** Routing refuses a reviewer or a refuter of the same family as
-  any author of the change.
+- **Decision.** Routing refuses a reviewer or a refuter of a family that wrote
+  the implementation. The family that wrote the hidden scenarios is avoided
+  too whenever another one is configured; to make that possible with two
+  families, the scenarios and the implementation are routed to the same one.
 - **Why.** "Nobody approves their own work" must hold structurally. Two runs of
   one model share blind spots.
 - **Benefit.** Uncorrelated review; a single-vendor outage or regression does
   not silently lower the bar.
 - **Risk.** At least two vendors are required, which costs more and doubles
-  the integration work. With one family the factory still runs, at tier 0.
+  the integration work. With one family no change can pass review: every
+  ticket stops at the owner. With two, a ticket handed to the second family
+  has its scenarios reviewed by the family that wrote them; the ledger says so.
 
 ## D-03 Hidden acceptance scenarios
 
@@ -83,7 +87,8 @@ PROVISIONAL(promotion-thresholds): the thresholds for tiers 1 to 3 are not defin
 - **Why.** The lesson of build-system breaches is that one over-trusted
   credential turns a sandbox escape into a platform compromise.
 - **Benefit.** A broken sandbox yields a patch that still faces every gate.
-  The link is trivially auditable and works across machines.
+  The link is trivially auditable. It is a shared directory today; carrying
+  it between two machines is planned.
 - **Risk.** Polling files is slower than a message bus (about a second per
   step) and needs a shared directory. The runner's daemon access remains the
   most sensitive point of the design: on a single host it defeats the
@@ -158,7 +163,8 @@ PROVISIONAL(promotion-thresholds): the thresholds for tiers 1 to 3 are not defin
 
 - **Decision.** Only issues written by the owner, a member or a collaborator,
   and labelled `factory:ready` by a person, are dispatched. Tickets proposed
-  by the factory itself (a split) wait for that label too.
+  by the factory itself (a split) are recognised by the GitHub App that
+  created them, and wait for that label too.
 - **Why.** In a public repository anyone can open an issue, and an author can
   edit the text after it was labelled. Issue text is input to agents.
 - **Benefit.** Authorization uses the forge's own permissions.
@@ -195,9 +201,56 @@ PROVISIONAL(license): the license was chosen by the author of the genesis import
   round lost the previous attempt; the queue could wedge when changes arrived
   while candidates were under test; and several statements in these documents
   described planned work in the present tense.
-- **Risk.** Those reviewers were of the same model family as the author, not
-  of another family. The owner's review of the genesis change is the missing
-  independent look.
+- **Second pass.** A fourth independent agent then tried to break the fixes
+  (about seventy adversarial patches against the gates, a randomised
+  simulation of the queue), and an automated review tool ran on the pull
+  request. Among what they found and what was fixed: an approval label
+  outlived the commit it was given on; a finding refuted once was ignored for
+  good; an interrupted queue tick could record a landing twice; the label set
+  of an issue was replaced as a whole; lists from the forge were read one
+  page deep; the size limit ignored the hidden scenarios.
+- **Risk.** The reviewing agents were of the same model family as the author.
+  Which models the automated tool runs is not something this repository can
+  attest. The owner's review of the genesis change is the missing independent
+  look.
+
+## D-18 An approval is tied to one commit and spent once
+
+- **Decision.** The label `factory:approved` counts only while the change
+  request points to the commit that passed the gates. It is removed when it
+  is used, when it is found on another commit, and when a change starts to
+  wait.
+- **Why.** A label is a statement about what the owner saw. Left in place, it
+  would approve whatever the branch holds later.
+- **Benefit.** A reworked or re-pushed change always needs a new decision.
+- **Risk.** One more click after an eviction. To reverse: drop the commit
+  comparison in the dispatcher.
+
+## D-19 A refuted finding that returns goes to the arbiter
+
+- **Decision.** A finding raised again after it was refuted is neither
+  dropped nor sent to refutation a second time: the ticket stops on a loop
+  trigger. When the ticket is handed to another family, nothing stays refuted.
+- **Why.** Dropping it silently lets one refutation overrule every later
+  review; arguing again lets two models disagree for ever.
+- **Benefit.** A standing disagreement between reviewer and refuter reaches a
+  person after one round.
+- **Risk.** Reviewers rarely repeat a finding word for word, so the trigger
+  fires less often than the situation occurs. To reverse: clear the list of
+  refuted findings at each round.
+
+## D-20 The trunk and the saved state decide, not the memory of a tick
+
+- **Decision.** A queue tick may stop anywhere. The next one treats a
+  candidate the trunk already contains as landed, and records landings and
+  evictions under an identity, so that a replay leaves one trace.
+- **Why.** The fast-forward, the ledger and the state file cannot be written
+  in one atomic step.
+- **Benefit.** A crash, a full disk or a forge outage in the middle of a tick
+  cannot land, evict or count a change twice.
+- **Risk.** A commit pushed to the trunk by hand that happens to be a queue
+  candidate is taken for a landing of that candidate. That is the correct
+  reading. To reverse: none needed.
 
 ## Sources of inspiration
 

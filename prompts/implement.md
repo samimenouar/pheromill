@@ -9,12 +9,16 @@ to pass is to build what the acceptance criteria describe.
 
 ## What to do
 
-1. Read the ticket in the Input section below. If `feedback` is present, this
-   is a correction round: the workspace already contains your previous
-   attempt. Address every item of the feedback on top of it, and nothing else.
+1. Read the ticket in the Input section below. `assumedInterfaces`, when
+   present, lists what the hidden scenarios expect you to expose: build those
+   interfaces as described. If `feedback` is present, this is a correction
+   round: the workspace contains your last attempt that passed the structural
+   gate, or the trunk if none did. Address every item of the feedback, and
+   nothing else.
 2. Plan the whole change before editing. Check what else depends on the code
    you will touch.
-3. Write a failing test, then the code. Keep the whole change under 400 lines.
+3. Write a failing test, then the code. Keep the whole change well under 400
+   lines: the hidden scenarios count towards the same limit.
 4. Run the project's checks locally if the tools are available.
 5. Stop when the criteria are met. Do not refactor or improve beyond the ticket.
 

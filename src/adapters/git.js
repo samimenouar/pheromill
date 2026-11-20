@@ -5,12 +5,12 @@
  * Requires git 2.38 or newer (merge-tree --write-tree).
  */
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { matchesAny } from '../domain/glob.js';
 
-const HARDENING = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null', '-c', 'protocol.file.allow=user', '-c', 'gc.auto=0'];
+const HARDENING = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null', '-c', 'core.quotePath=false', '-c', 'protocol.file.allow=user', '-c', 'gc.auto=0'];
 const DIFF_OPTIONS = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-renames'];
 const SHA = /^[0-9a-f]{40,64}$/;
 
@@ -34,7 +34,7 @@ export class GitVcs {
    * Run git and return its exit code and output. Only a failure to start git rejects.
    * @returns {Promise<{code: number, stdout: string, stderr: string}>}
    */
-  async run(args, { index = null, workTree = null, gitDir = this.mirror, input = null, network = false, literalPaths = true } = {}) {
+  async run(args, { index = null, workTree = null, gitDir = this.mirror, input = null, network = false } = {}) {
     const auth = {};
     if (network && this.credentials) {
       const basic = Buffer.from(`x-access-token:${await this.credentials()}`).toString('base64');
@@ -53,7 +53,7 @@ export class GitVcs {
       GIT_COMMITTER_NAME: this.identity.name,
       GIT_COMMITTER_EMAIL: this.identity.email,
       GIT_DIR: gitDir,
-      ...(literalPaths ? { GIT_LITERAL_PATHSPECS: '1' } : {}),
+      GIT_LITERAL_PATHSPECS: '1',
       ...(index ? { GIT_INDEX_FILE: index } : {}),
       ...(workTree ? { GIT_WORK_TREE: workTree } : {}),
     };
@@ -131,8 +131,11 @@ export class GitVcs {
       const index = join(scratch, 'index');
       await this.git(['read-tree', sha], { index });
       await this.git(['add', '-A', '--', '.'], { index, workTree: directory });
-      const excludes = hidePaths.map((glob) => `:(exclude,glob)${glob}`);
-      return this.git(['diff', '--cached', '--binary', ...DIFF_OPTIONS, sha, '--', '.', ...excludes], { index, workTree: directory, literalPaths: false });
+      // The same matcher as exportTree decides what is hidden; git only sees literal paths.
+      const changed = (await this.git(['diff', '--cached', '--name-only', '-z', '--no-renames', sha], { index, workTree: directory })).split('\0');
+      const visible = changed.filter((path) => path !== '' && !matchesAny(path, hidePaths));
+      if (visible.length === 0) return '';
+      return this.git(['diff', '--cached', '--binary', ...DIFF_OPTIONS, sha, '--', ...visible], { index, workTree: directory });
     });
   }
 
@@ -239,7 +242,12 @@ export async function cloneMirror(url, directory, options = {}) {
     new Promise((resolve, reject) => {
       execFile('git', args, { env }, (error, _out, stderr) => (error ? reject(new Error(stderr.trim() || error.message)) : resolve()));
     });
-  await run(['init', '--quiet', '--bare', directory]);
-  await run(['--git-dir', directory, 'remote', 'add', 'origin', url]);
-  await new GitVcs({ mirror: directory, ...options }).fetch();
+  // Build beside the final place and move it in only when complete: an
+  // interrupted start never leaves a half-made mirror that looks ready.
+  const building = `${directory}.partial`;
+  await rm(building, { recursive: true, force: true });
+  await run(['init', '--quiet', '--bare', building]);
+  await run(['--git-dir', building, 'remote', 'add', 'origin', url]);
+  await new GitVcs({ mirror: building, ...options }).fetch();
+  await rename(building, directory);
 }

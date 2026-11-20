@@ -32,12 +32,20 @@ export function parseFindings(raw) {
   const findings = [];
   const list = raw && typeof raw === 'object' ? /** @type {any} */ (raw).findings : null;
   if (!Array.isArray(list)) return { findings, errors: ['Report must contain a "findings" array.'] };
+  const seen = new Map();
   list.forEach((item, index) => {
     const ok =
       item && typeof item.category === 'string' && typeof item.path === 'string' &&
       typeof item.message === 'string' && SEVERITIES.includes(item.severity);
-    if (!ok) errors.push(`Finding ${index} is malformed.`);
-    else findings.push({ ...item, fingerprint: fingerprint(item) });
+    if (!ok) {
+      errors.push(`Finding ${index} is malformed.`);
+      return;
+    }
+    // Two findings that differ only by numbers (line 12, line 40) each need their own verdict.
+    const base = fingerprint(item);
+    const occurrence = (seen.get(base) ?? 0) + 1;
+    seen.set(base, occurrence);
+    findings.push({ ...item, fingerprint: occurrence === 1 ? base : `${base}-${occurrence}` });
   });
   return { findings, errors };
 }

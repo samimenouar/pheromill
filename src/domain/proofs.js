@@ -17,9 +17,10 @@ export function validateRegistry(registry, readFile) {
   if (!Array.isArray(claims)) return ['The registry must contain a "claims" array.'];
   const seen = new Set();
 
-  for (const claim of claims) {
-    const label = claim?.id ?? '(missing id)';
-    if (typeof claim?.id !== 'string' || !/^[a-z0-9-]+$/.test(claim.id)) problems.push(`${label}: id must be a slug.`);
+  for (const entry of claims) {
+    const claim = entry !== null && typeof entry === 'object' ? entry : {};
+    const label = typeof claim.id === 'string' ? claim.id : '(missing id)';
+    if (typeof claim.id !== 'string' || !/^[a-z0-9-]+$/.test(claim.id)) problems.push(`${label}: id must be a slug.`);
     if (seen.has(claim.id)) problems.push(`${label}: duplicate id.`);
     seen.add(claim.id);
     if (typeof claim.area !== 'string' || typeof claim.claim !== 'string') problems.push(`${label}: area and claim are required.`);
@@ -28,12 +29,17 @@ export function validateRegistry(registry, readFile) {
       continue;
     }
     if (claim.status === 'PROVEN') {
-      const evidence = claim.evidence ?? [];
-      if (!Array.isArray(evidence) || evidence.length === 0) problems.push(`${label}: PROVEN requires evidence.`);
-      for (const item of Array.isArray(evidence) ? evidence : []) {
+      const evidence = Array.isArray(claim.evidence) ? claim.evidence : [];
+      if (evidence.length === 0) problems.push(`${label}: PROVEN requires evidence.`);
+      for (const item of evidence) {
+        if (typeof item?.file !== 'string' || typeof item?.test !== 'string') {
+          problems.push(`${label}: each evidence needs a file and a test.`);
+          continue;
+        }
         const content = readFile(item.file);
+        // The whole title, quotes included: a longer or shorter test name is another test.
         if (content === null) problems.push(`${label}: evidence file ${item.file} does not exist.`);
-        else if (!content.includes(`test('${item.test}`)) problems.push(`${label}: test "${item.test}" not found in ${item.file}.`);
+        else if (!content.includes(`test('${item.test}',`)) problems.push(`${label}: test "${item.test}" not found in ${item.file}.`);
       }
     } else if (typeof claim.next !== 'string' || claim.next.trim() === '') {
       problems.push(`${label}: ${claim.status} requires "next", the step that will prove or build it.`);

@@ -9,10 +9,11 @@ makes sure the only way to pass is to do the work.
 | --- | --- |
 | Write code that satisfies the tests it can read, not the ticket | The acceptance scenarios are written first by another step and are absent from the implementer's workspace. Without that step, nothing is implemented. |
 | Edit, skip or delete a failing test | Any edit or removal of an existing test makes the change HIGH and brings a dedicated reviewer, who gets the ticket and the diff. A deterministic detector adds signals for removed assertions, skipped tests, relaxed thresholds and replaced snapshots. |
-| Weaken the hidden scenarios | The specify step can only add files; its scenarios are reviewed with the change. |
-| Approve its own work | Reviewers and the refuter come from another model family than the author. This is enforced by routing, not by instruction. |
+| Weaken the hidden scenarios | The specify step can only add files. Its scenarios are reviewed with the change, by a family that did not write them whenever the routes allow it (see [architecture.md](architecture.md)); the ledger records when they do not. |
+| Approve its own work | Reviewers and the refuter never belong to a family that wrote the implementation. This is enforced by routing, not by instruction, and the runner refuses to launch a job on another family than the one it was routed to. |
 | Report success without evidence | Each acceptance criterion needs evidence seen by the reviewer. A step that crashed, timed out or returned a malformed report stops the ticket; it never counts as approval. |
-| Argue a finding away | A finding is dropped only by an explicit refutation from another family; a missing verdict stops the ticket. |
+| Argue a finding away | A finding is dropped only by an explicit refutation from a family that did not write the implementation; a missing verdict stops the ticket. |
+| Wear the reviewer down | A finding that comes back after it was refuted is not dropped and not argued again: the ticket stops and the arbiter decides. |
 | Change the rules | Configuration, pipelines, prompts and agent rules are reserved paths: touching them is CRITICAL. In this repository the factory's own source is reserved too. |
 | Say one thing and do another in a patch | The gates do not read the patch as the agent wrote it. The patch is applied, and git reports the paths and modes it really changes. |
 | Rewrite the record | Decisions are appended to a hash-chained ledger in the control zone, out of reach of any sandbox. |
@@ -25,7 +26,7 @@ coverage drops, but the pipeline does not feed it coverage data yet.
 
 | When | What is read | Who reads | Output | Cost bounded by |
 | --- | --- | --- | --- | --- |
-| Every change | The diff of the change, hidden scenarios included | An agent of another family, then refutation | Findings | Two correction rounds |
+| Every change | The diff of the change, hidden scenarios included | An agent of a family that did not write the implementation, then refutation | Findings | Two correction rounds |
 | Every week (planned) | What merged in core modules and reserved paths | The most capable model in the routing table | At most three tickets | The diff of the week, never the whole repository |
 | Every month and before each release (planned) | The whole repository, from a fresh session, six angles | The most capable model; for security, one that accepts security review work | A report, one ticket per confirmed finding | A written token ceiling |
 
@@ -34,12 +35,15 @@ Findings are sorted after refutation:
 - **Blocking, confirmed**: back to the author, within the correction budget.
 - **Minor, confirmed**: never a ticket. It is recorded in the ledger, to feed
   the debt register.
-- **Refuted**: dropped. If the same finding comes back, that is a loop signal.
+- **Refuted**: dropped. If the same finding comes back on the same author's
+  change, the ticket stops and the arbiter decides.
 - **Seen three times**: the class of finding should become a rule or a lint.
   The detection exists; opening the rule ticket is planned.
 
 The pipeline can also take findings from one external review tool on HIGH and
-CRITICAL changes, at most once per ticket. No such tool is wired in yet.
+CRITICAL changes, at most once per ticket, on a commit the model reviews let
+through. If that commit is corrected afterwards, the new one was not examined
+by the tool and the owner decides. No such tool is wired in yet.
 
 ## The reference set (planned)
 

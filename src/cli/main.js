@@ -37,13 +37,17 @@ const USAGE = `pheromill <command>
   serve control | runner | egress                   long-running services (see docs/operations.md)
 `;
 
+/** Flags that never take a value: the word after them is an operand. */
+const SWITCHES = ['strict', 'production', 'gate', 'check', 'offline'];
+
 function parseArgs(args) {
   const flags = {};
   const positional = [];
   for (let i = 0; i < args.length; i += 1) {
+    const name = args[i].slice(2);
     if (!args[i].startsWith('--')) positional.push(args[i]);
-    else if (args[i + 1] === undefined || args[i + 1].startsWith('--')) flags[args[i].slice(2)] = true;
-    else flags[args[i].slice(2)] = args[(i += 1)];
+    else if (SWITCHES.includes(name) || args[i + 1] === undefined || args[i + 1].startsWith('--')) flags[name] = true;
+    else flags[name] = args[(i += 1)];
   }
   return { flags, positional };
 }

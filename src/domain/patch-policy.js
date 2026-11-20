@@ -8,7 +8,8 @@ import { matchesAny } from './glob.js';
 /**
  * @param {ReturnType<import('./diff.js').parseUnifiedDiff>} files
  * @param {{paths: {queueOwned: string[], holdout: string[]}, limits: {maxChangedLines: number}}} config
- * @param {{allowHoldout?: boolean}} [options] `allowHoldout` is set for the specify step only.
+ * @param {{allowHoldout?: boolean, carriedLines?: number}} [options] `allowHoldout` is set for the specify
+ *   step only; `carriedLines` counts lines that ship in the same change but come from another step.
  * @returns {{ok: boolean, violations: Array<{rule: string, path?: string, detail: string}>}}
  */
 export function checkPatch(files, config, options = {}) {
@@ -35,11 +36,13 @@ export function checkPatch(files, config, options = {}) {
       }
     }
   }
-  const { changedLines } = diffStats(files);
+  const carried = options.carriedLines ?? 0;
+  const changedLines = diffStats(files).changedLines + carried;
   if (changedLines > config.limits.maxChangedLines) {
+    const share = carried > 0 ? ` (${carried} of them in hidden scenarios)` : '';
     violations.push({
       rule: 'too_large',
-      detail: `${changedLines} changed lines exceed the limit of ${config.limits.maxChangedLines}.`,
+      detail: `${changedLines} changed lines${share} exceed the limit of ${config.limits.maxChangedLines}.`,
     });
   }
   return { ok: violations.length === 0, violations };

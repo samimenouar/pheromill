@@ -232,3 +232,19 @@ test('hygiene: inner layers must not import outer layers', () => {
   ];
   assert.deepEqual(findLayerViolations(files, layers).map((v) => v.rule), ['domain must not import adapters', 'application must not import adapters', 'domain must not import adapters']);
 });
+
+test('hygiene: a letter of any other script is reported, whatever its alphabet', () => {
+  const letters = [0x00e9, 0x0142, 0x03b1, 0x0434, 0x05d0, 0x0627, 0x0915, 0x4e2d, 0x3042, 0xac00].map((code) => String.fromCharCode(code));
+  for (const letter of letters) assert.equal(findNonEnglish([{ path: 'a.md', content: `word ${letter} word` }]).length, 1, letter.codePointAt(0).toString(16));
+  const symbols = [0x2192, 0x2014, 0x00a9, 0x2713].map((code) => String.fromCharCode(code)).join(' ');
+  assert.deepEqual(findNonEnglish([{ path: 'a.md', content: `plain ASCII, digits 123 and symbols ${symbols}` }]), []);
+});
+
+test('egress: only global unicast addresses are public, and an embedded IPv4 address is judged as itself', () => {
+  for (const address of ['2001:db8::1', '2001::1', '2001:10::1', '3fff::1', 'ff02::1', '::', '100::1', '::ffff:169.254.169.254', '::ffff:7f00:1', '0:0:0:0:0:ffff:a00:1', '1.2.3', '256.1.1.1', '01.2.3.4', '1::2::3', 'fe80::1%eth0', '224.0.0.1', '240.0.0.1', '255.255.255.255']) {
+    assert.equal(isPrivateAddress(address), true, address);
+  }
+  for (const address of ['2001:4860:4860::8888', '2a00:1450:4007::200e', '::ffff:1.1.1.1', '1.1.1.1', '172.32.0.1', '100.128.0.1']) {
+    assert.equal(isPrivateAddress(address), false, address);
+  }
+});

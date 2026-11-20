@@ -27,27 +27,24 @@ export function selectRunnable(ready, running, options) {
   const active = [...running];
   const kinds = [...options.startedKinds];
   const start = [];
-  const held = [];
+  const waiting = [...ready];
+  const blockerOf = (ticket) => active.find((other) => anyOverlap(ticket.likelyFiles, other.likelyFiles));
 
-  const candidates = [...ready];
-  if (debtIsDue(kinds, options.featuresPerDebtTicket)) {
-    const debtIndex = candidates.findIndex((ticket) => ticket.kind === 'debt');
-    if (debtIndex > 0) candidates.unshift(...candidates.splice(debtIndex, 1));
+  // Fill one slot at a time, so that a debt ticket that can run is never passed
+  // over because another debt ticket, ahead of it, is blocked.
+  while (active.length < options.maxParallelTickets) {
+    const runnable = waiting.filter((ticket) => !blockerOf(ticket));
+    if (runnable.length === 0) break;
+    const due = debtIsDue(kinds, options.featuresPerDebtTicket);
+    const next = (due && runnable.find((ticket) => ticket.kind === 'debt')) || runnable[0];
+    waiting.splice(waiting.indexOf(next), 1);
+    active.push(next);
+    kinds.push(next.kind);
+    start.push(next);
   }
-
-  for (const ticket of candidates) {
-    if (active.length >= options.maxParallelTickets) {
-      held.push({ id: ticket.id, reason: 'capacity' });
-      continue;
-    }
-    const blocker = active.find((other) => anyOverlap(ticket.likelyFiles, other.likelyFiles));
-    if (blocker) {
-      held.push({ id: ticket.id, reason: `overlaps ${blocker.id}` });
-      continue;
-    }
-    active.push(ticket);
-    kinds.push(ticket.kind);
-    start.push(ticket);
-  }
+  const held = waiting.map((ticket) => {
+    const blocker = blockerOf(ticket);
+    return { id: ticket.id, reason: blocker ? `overlaps ${blocker.id}` : 'capacity' };
+  });
   return { start, held };
 }

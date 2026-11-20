@@ -12,12 +12,13 @@ A ticket is one thing a user can see or test.
 | 1 to 5 points, never a micro-fix | Small findings as tickets inflate the backlog faster than it is closed. |
 | Acceptance criteria are required | "Done" must be checkable by a test or by looking at the product. |
 | Likely files are required | The scheduler needs them to keep colliding tickets apart. |
-| Written by a trusted person, then labelled `factory:ready` | An issue is executed only if its author is the owner, a member or a collaborator, and a person with triage rights labelled it. Its author can edit the text later, so the author must be trusted. |
+| Written by a trusted author, then labelled `factory:ready` | An issue is executed only if its author is the owner, a member or a collaborator, or the factory's own GitHub App (the tickets proposed by a split), and a person with triage rights labelled it. Its author can edit the text later, so the author must be trusted. |
 | The form is read strictly | A body that quotes a form heading inside an answer is refused rather than guessed. |
 
 **Done means done.** A change whose criteria are not all evidenced is sent
 back; a ticket never spawns a follow-up for what it did not finish. A ticket
-sent back to rework twice goes to the owner.
+sent back to rework twice goes to the owner, who gives it a fresh allowance by
+labelling it `factory:ready` again.
 
 **Frozen scope.** A milestone has a short list of exit criteria. Once it is
 frozen in the configuration, a ticket is worked only if it belongs to the
@@ -31,17 +32,17 @@ planned.
 ## Scheduling
 
 - Two tickets whose likely files may overlap never run at the same time, and a
-  change waiting in the queue keeps its files occupied. The overlap test is
-  conservative. A change is not confined to its likely files; if two changes
-  collide anyway, the queue catches it as a conflict.
+  change waiting in the queue or for an approval keeps its files occupied. The
+  overlap test is conservative. A change is not confined to its likely files;
+  if two changes collide anyway, the queue catches it as a conflict.
 - At most four tickets run in parallel by default.
 - One debt ticket is scheduled for every four feature tickets.
 
 ## Changes
 
-A change is at most 500 lines: beyond that the patch is refused. Earlier, at
-400 lines, the ticket is stopped and split into smaller tickets that each
-stand on their own. Tickets proposed by a split wait for a person to label
+A change is at most 500 lines, hidden scenarios included: beyond that the
+patch is refused. Earlier, at 400 lines, the ticket is stopped and split into
+smaller tickets that each stand on their own. Tickets proposed by a split wait for a person to label
 them. A change is never trimmed to fit.
 
 Some files attract conflicts: lock files, migration numbers, route indexes,
@@ -55,7 +56,7 @@ The level is computed from the paths a change touches. No model is asked.
 | Level | Trigger | Gates added |
 | --- | --- | --- |
 | LOW | Nothing below | Checks green, review by another family, no confirmed blocking finding |
-| HIGH | A core module, a dependency manifest, an existing test, a test-weakening signal, or a dependency request | Security review; test guard review when an existing test was touched |
+| HIGH | A core module, a dependency manifest, a git control file (`.gitattributes`, `.gitignore`, `.gitmodules`), an existing test, a test-weakening signal, or a dependency request | Security review; test guard review when an existing test was touched |
 | CRITICAL | A reserved path: configuration, pipelines, deployment, agent rules, and in this repository the factory's own source | A second independent review, from a third family when one exists |
 
 A change the factory cannot parse with certainty is CRITICAL and refused. A
@@ -65,8 +66,15 @@ reviewed at the lower level: it is sent back and routed again at the right one.
 Whether a level may merge without a person depends on the autonomy tier
 (see [metrics.md](metrics.md)). The gates run at every tier. Below the
 required tier, a change that passed every gate waits until a person adds the
-label `factory:approved` to it; it then enters the queue, pinned to the commit
-that was reviewed.
+label `factory:approved` to it.
+
+An approval is tied to one commit. It counts only if the change request still
+points to the commit that passed the gates; the label is removed once it is
+used, and a label set earlier or on another commit is removed with a comment
+that says why. A change evicted from the queue and reworked therefore needs a
+new approval. To reject a waiting change instead, relabel its ticket
+`factory:ready` (it is worked again) or close it: the change stops waiting and
+its files are free.
 
 ## The merge queue
 
@@ -94,6 +102,7 @@ flowchart LR
 | Flaky tolerance | A failed candidate is retried once. A pass after a failure is recorded in the ledger. |
 | Conflicts | A change that conflicts with the future trunk is evicted before any run. |
 | Outside moves | If the trunk moves outside the queue, candidates are rebuilt on the new head. |
+| Interruptions | A tick stopped anywhere is replayed from the saved state and from what the trunk contains: each change lands, is evicted and is recorded once. |
 
 The queue is implemented here rather than delegated to the forge, because a
 forge-native queue is not available everywhere (GitHub's is limited to

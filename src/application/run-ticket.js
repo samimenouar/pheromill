@@ -3,11 +3,11 @@
  * steps. Agents write and review; they never decide whether their own work
  * passes. Every decision is appended to the ledger.
  *
- *   specify -> implement -> patch gate -> publish -> checks -> review(s)
- *           -> refutation -> correction round (bounded) -> risk gates -> queue
+ *   specify -> implement -> patch gate -> risk -> publish -> checks -> review(s)
+ *           -> refutation -> correction round (bounded) -> autonomy -> queue
  */
 import { mayMergeAlone, requiredGates } from '../domain/autonomy.js';
-import { arbitrate, budgetFor, detectLoop } from '../domain/budget.js';
+import { arbitrate, budgetFor, detectLoop, returnedFinding } from '../domain/budget.js';
 import { evaluateDependency, parseDependencyRequest } from '../domain/dependency-gate.js';
 import { diffStats, parseUnifiedDiff, reconcile } from '../domain/diff.js';
 import { parseFindings, parseVerdicts, triage } from '../domain/findings.js';
@@ -22,6 +22,9 @@ const MAX_CHILDREN = 5;
 
 /** Raised to stop the pipeline and hand the ticket to the owner. */
 class Halt extends Error {}
+
+/** Raised when the owner halted the factory: the ticket stops where it is and starts again later. */
+class Interrupted extends Error {}
 
 /** Risk level expected from the files a ticket says it will touch. */
 export function predictLevel(ticket, config) {
@@ -39,8 +42,9 @@ const strings = (value) => (Array.isArray(value) ? value.filter((item) => typeof
  * @param {{runner: import('./ports.js').StepRunner, vcs: import('./ports.js').Vcs, forge: import('./ports.js').Forge,
  *   checks: import('./ports.js').Checks, registry: import('./ports.js').PackageRegistry,
  *   ledger: import('./ports.js').Ledger, clock: import('./ports.js').Clock,
- *   externalReview?: (input: {sha: string, patch: string}) => Promise<{findings: object[]}>}} ports
- * @returns {Promise<{outcome: 'queued'|'needs_owner'|'rework'|'split'|'invalid', reason: string, level?: string,
+ *   externalReview?: (input: {sha: string, patch: string}) => Promise<{findings: object[]}>,
+ *   halted?: () => Promise<boolean>}} ports
+ * @returns {Promise<{outcome: 'queued'|'needs_owner'|'rework'|'split'|'invalid'|'halted', reason: string, level?: string,
  *   changeId?: string, sha?: string, gatesPassed?: boolean, children?: object[]}>}
  */
 export async function runTicket(ticket, config, ports) {
@@ -66,13 +70,19 @@ export async function runTicket(ticket, config, ports) {
   let escalations = ticket.escalations ?? 0;
   let excludedAuthors = [];
   let authors = new Set();
+  let lastAttempt = null; // the last patch this author produced, accepted or not
   let changeId = null;
   let stepCount = 0;
   const base = await vcs.head(config.project.trunk);
   const branch = `factory/t${ticket.id}`;
   const runId = `t${ticket.id}`.toLowerCase();
 
+  const unlessHalted = async () => {
+    if (await ports.halted?.()) throw new Interrupted('The factory was halted by its owner.');
+  };
+
   const agentStep = async (step, route, job) => {
+    await unlessHalted();
     stepCount += 1;
     const result = await runner.run({ runId: `${runId}-${stepCount}`, step, route, base, patches: [], hidePaths: [], readOnly: true, ...job });
     run.counters.sandboxSeconds += result.seconds;
@@ -119,12 +129,24 @@ export async function runTicket(ticket, config, ports) {
     let proposal = null;
     if (escalations === 0) {
       const route = selectRoute(config, { step: 'arbitrate', level: routeLevel });
-      proposal = (await agentStep('arbitrate', route, { input: { ticket, loop } })).report;
+      const limits = { ...config.limits, maxChildren: MAX_CHILDREN };
+      const { report } = await agentStep('arbitrate', route, { input: { ticket, loop, limits } });
+      proposal = report?.error ? null : report; // an arbiter that crashed proposed nothing
     }
     const decision = arbitrate({ trigger: loop.trigger, escalations, otherFamilyAvailable, proposal: proposal?.action });
     escalations += 1;
     await log('arbitration', { trigger: loop.trigger, detail: loop.detail, action: decision.action });
     return { decision, proposal };
+  };
+
+  /** A route outside `hard` families and, when one exists, outside `soft` families too. */
+  const routeFor = (query, hard, soft) => {
+    try {
+      return selectRoute(config, { ...query, excludeFamilies: [...hard, ...soft] });
+    } catch (error) {
+      if (!(error instanceof RoutingError) || soft.length === 0) throw error;
+      return selectRoute(config, { ...query, excludeFamilies: hard });
+    }
   };
 
   try {
@@ -138,6 +160,9 @@ export async function runTicket(ticket, config, ports) {
       checkPatch(holdout.files, config, { allowHoldout: true }).ok &&
       holdout.files.every((file) => file.status === 'added' && matchesAny(file.path, config.paths.holdout));
     if (!holdoutOk) return await stop('needs_owner', 'The specify step did not produce a patch that only adds holdout scenarios.');
+    const specifier = specifyRoute.family;
+    const holdoutLines = diffStats(holdout.files).changedLines;
+    const assumedInterfaces = strings(specified.report?.assumedInterfaces);
 
     let feedback = [];
     let previous = null; // the last patch of this author that applied, carried into a correction round
@@ -149,9 +174,11 @@ export async function runTicket(ticket, config, ports) {
         excludedAuthors = [...excludedAuthors, ...authors];
         authors = new Set();
         previous = null;
+        lastAttempt = null;
         run.steps = [];
         run.changedLines = 0;
         run.raisedFingerprints = [];
+        run.refutedFingerprints = []; // another author writes another change: nothing is settled about it
         run.counters = { ...run.counters, fixRounds: 0, ciRuns: 0, commits: 0 };
         return null;
       }
@@ -164,6 +191,30 @@ export async function runTicket(ticket, config, ports) {
       return stop('needs_owner', `${decision.reason} ${loop.detail}`);
     };
 
+    /**
+     * Refutation: by a family that did not write the change, with an explicit
+     * verdict for every finding. A finding that comes back after it was refuted
+     * is never dropped and never argued again: it is a loop, and the arbiter decides.
+     * @returns {Promise<{loop: object}|{blocking: object[]}>}
+     */
+    const judge = async (findings, level, patches) => {
+      run.raisedFingerprints = findings.map((finding) => finding.fingerprint);
+      const returned = returnedFinding(run);
+      if (returned) return { loop: { trigger: 'refuted_finding_returned', detail: returned } };
+      run.raisedFingerprints = [];
+      if (findings.length === 0) return { blocking: [] };
+      const route = routeFor({ step: 'refute', level }, [...authors], [specifier]);
+      const refuted = mustSucceed('refute', await agentStep('refute', route, { patches, input: { findings } }));
+      const parsed = parseVerdicts(refuted.report, findings);
+      if (parsed.errors.length > 0) throw new Halt(`The refute report is incomplete: ${parsed.errors[0]}`);
+      const sorted = triage(findings, parsed.verdicts);
+      run.refutedFingerprints = [...new Set([...run.refutedFingerprints, ...sorted.refuted.map((finding) => finding.fingerprint)])];
+      for (const finding of sorted.debt) await log('debt_finding', { category: finding.category, path: finding.path, message: finding.message });
+      return { blocking: sorted.blocking };
+    };
+
+    const describe = (finding) => `${finding.category} in ${finding.path}: ${finding.message}`;
+
     for (;;) {
       const loop = detectLoop(run, budget, config.limits);
       if (loop) {
@@ -174,13 +225,15 @@ export async function runTicket(ticket, config, ports) {
       }
 
       // Implement, or correct on top of the previous attempt, without ever seeing the hidden scenarios.
-      const authorRoute = selectRoute(config, { step: 'implement', level: routeLevel, excludeFamilies: excludedAuthors });
+      // The family that wrote the scenarios is preferred, so that another family is left to review both.
+      const others = families(config).filter((family) => family !== specifier);
+      const authorRoute = routeFor({ step: 'implement', level: routeLevel }, excludedAuthors, others);
       authors.add(authorRoute.family);
       const produced = await agentStep('implement', authorRoute, {
         readOnly: false,
         hidePaths: config.paths.holdout,
         patches: previous ? [previous] : [],
-        input: { ticket, feedback },
+        input: { ticket, feedback, assumedInterfaces },
       });
       const record = { errorSignature: null, changedFiles: 0 };
       run.steps.push(record);
@@ -203,9 +256,9 @@ export async function runTicket(ticket, config, ports) {
         continue;
       }
       const files = change.files;
-      previous = change.patch === '' ? previous : change.patch;
-      record.changedFiles = files.length;
-      run.changedLines = diffStats(files).changedLines;
+      record.changedFiles = change.patch === lastAttempt ? 0 : files.length; // the same patch again is no change
+      lastAttempt = change.patch;
+      run.changedLines = holdoutLines + diffStats(files).changedLines; // the size of what would be published
       const outgrown = detectLoop(run, budget, config.limits);
       if (outgrown) {
         const handled = await onLoop(outgrown);
@@ -214,8 +267,8 @@ export async function runTicket(ticket, config, ports) {
         continue;
       }
 
-      // Deterministic patch gate.
-      const gate = checkPatch(files, config);
+      // Deterministic patch gate. The size limit applies to the change as published, scenarios included.
+      const gate = checkPatch(files, config, { carriedLines: holdoutLines });
       const requestFile = files.find((file) => file.path === config.dependencies.requestFile);
       const dependencyProblems = [];
       if (requestFile) {
@@ -240,6 +293,7 @@ export async function runTicket(ticket, config, ports) {
         feedback = await sendBack([...gate.violations.map((v) => `${v.rule}: ${v.detail}`), ...dependencyProblems]);
         continue;
       }
+      previous = change.patch; // only a patch that passed the gate is built upon
 
       // Risk is decided by what the whole change touches, hidden scenarios included.
       const everything = [...holdout.files, ...files];
@@ -253,6 +307,7 @@ export async function runTicket(ticket, config, ports) {
 
       // Publish and prove.
       const patches = [holdout.patch, change.patch];
+      await unlessHalted();
       const sha = await vcs.publish({ base, branch, patches, message: `${ticket.title} (ticket ${ticket.id})` });
       run.counters.commits += 1;
       const labels = [`risk:${risk.level.toLowerCase()}`];
@@ -269,7 +324,8 @@ export async function runTicket(ticket, config, ports) {
         continue;
       }
 
-      // Independent reviews: never a family that wrote the change.
+      // Independent reviews: never a family that wrote the implementation and, when a
+      // third party exists, not the family that wrote the scenarios either.
       const gates = requiredGates(risk.level, { weakeningSignals: weakening.length, testsTouched, externalTool: Boolean(ports.externalReview) });
       const reviewSteps = ['review'];
       if (gates.includes('security_review')) reviewSteps.push('security_review');
@@ -279,7 +335,7 @@ export async function runTicket(ticket, config, ports) {
       const reviewerFamilies = new Set();
       const authorReport = { summary: produced.report?.summary ?? null, embeddedInstructions: strings(produced.report?.embeddedInstructions), notDone: strings(produced.report?.notDone) };
       const review = async (step, exclude) => {
-        const route = selectRoute(config, { step, level: risk.level, excludeFamilies: exclude });
+        const route = routeFor({ step, level: risk.level }, exclude, [specifier]);
         assertIndependentReview([...authors], route.family);
         reviewerFamilies.add(route.family);
         const input = step === 'test_guard_review' ? { ticket, weakening } : { ticket, authorReport };
@@ -294,48 +350,60 @@ export async function runTicket(ticket, config, ports) {
         const third = families(config).some((family) => !authors.has(family) && !reviewerFamilies.has(family));
         await review('review', third ? [...authors, ...reviewerFamilies] : [...authors]);
       }
-      if (gates.includes('external_tool_pass') && run.counters.externalToolPasses < budget.externalToolPasses) {
-        run.counters.externalToolPasses += 1;
-        const external = parseFindings(await ports.externalReview({ sha, patch: change.patch }));
-        if (external.errors.length > 0) throw new Halt(`The external review report is malformed: ${external.errors[0]}`);
-        raised.push(...external.findings);
-      }
 
-      // Refutation: by a family that did not write the change, with an explicit
-      // verdict for every finding. A finding already refuted is not argued again;
-      // its return is a loop signal.
-      const fresh = raised.filter((finding) => !run.refutedFingerprints.includes(finding.fingerprint));
-      run.raisedFingerprints = raised.filter((finding) => !fresh.includes(finding)).map((finding) => finding.fingerprint);
-      let verdicts = {};
-      if (fresh.length > 0) {
-        const route = selectRoute(config, { step: 'refute', level: risk.level, excludeFamilies: [...authors] });
-        const refuted = mustSucceed('refute', await agentStep('refute', route, { patches, input: { findings: fresh } }));
-        const parsed = parseVerdicts(refuted.report, fresh);
-        if (parsed.errors.length > 0) throw new Halt(`The refute report is incomplete: ${parsed.errors[0]}`);
-        verdicts = parsed.verdicts;
+      const again = async (loop) => {
+        const handled = await onLoop(loop);
+        if (!handled) feedback = [];
+        return handled;
+      };
+      const judged = await judge(raised, risk.level, patches);
+      if (judged.loop) {
+        const handled = await again(judged.loop);
+        if (handled) return handled;
+        continue;
       }
-      const sorted = triage(fresh, verdicts);
-      run.refutedFingerprints = [...new Set([...run.refutedFingerprints, ...sorted.refuted.map((finding) => finding.fingerprint)])];
-      for (const finding of sorted.debt) await log('debt_finding', { category: finding.category, path: finding.path, message: finding.message });
-
-      if (sorted.blocking.length > 0 || unmet.size > 0) {
-        feedback = await sendBack([
-          ...sorted.blocking.map((finding) => `${finding.category} in ${finding.path}: ${finding.message}`),
-          ...[...unmet].map((criterion) => `Acceptance criterion not evidenced: ${criterion}`),
-        ]);
+      if (judged.blocking.length > 0 || unmet.size > 0) {
+        feedback = await sendBack([...judged.blocking.map(describe), ...[...unmet].map((criterion) => `Acceptance criterion not evidenced: ${criterion}`)]);
         continue;
       }
 
+      // The external tool has a small budget: it is spent on a commit the model reviews let through.
+      const missed = [];
+      if (gates.includes('external_tool_pass')) {
+        if (run.counters.externalToolPasses >= budget.externalToolPasses) {
+          missed.push('external_tool_pass');
+        } else {
+          run.counters.externalToolPasses += 1;
+          await unlessHalted();
+          const external = parseFindings(await ports.externalReview({ sha, patch: change.patch }));
+          if (external.errors.length > 0) throw new Halt(`The external review report is malformed: ${external.errors[0]}`);
+          const verdict = await judge(external.findings, risk.level, patches);
+          if (verdict.loop) {
+            const handled = await again(verdict.loop);
+            if (handled) return handled;
+            continue;
+          }
+          if (verdict.blocking.length > 0) {
+            feedback = await sendBack(verdict.blocking.map(describe));
+            continue;
+          }
+        }
+      }
+
       // Every gate passed. Autonomy decides who presses the button.
-      await log('gates_passed', { level: risk.level, gates, sha, authors: [...authors], reviewers: [...reviewerFamilies] });
+      const passed = gates.filter((gate) => !missed.includes(gate));
+      const scenariosReviewedByAnotherFamily = !reviewerFamilies.has(specifier);
+      await log('gates_passed', { level: risk.level, gates: passed, missed, sha, authors: [...authors], specifier, reviewers: [...reviewerFamilies], scenariosReviewedByAnotherFamily });
       const done = { level: risk.level, sha, gatesPassed: true };
-      const overrun = detectLoop({ ...run, raisedFingerprints: [] }, budget, config.limits);
+      if (missed.length > 0) return await stop('needs_owner', 'Every other gate passed, but the external review budget was spent on an earlier commit: this commit was not examined by the external tool.', done);
+      const overrun = detectLoop(run, budget, config.limits);
       if (overrun) return await stop('needs_owner', `All gates passed but the budget was exceeded (${overrun.detail}).`, done);
       if (requestFile) return await stop('needs_owner', 'All gates passed and the dependency request was approved; installing it is a step for the owner until the queue does it.', done);
       if (mayMergeAlone(config.autonomy.tier, risk.level)) return await stop('queued', 'All gates passed.', done);
       return await stop('needs_owner', `All gates passed; tier ${config.autonomy.tier} does not merge ${risk.level} changes alone.`, done);
     }
   } catch (error) {
+    if (error instanceof Interrupted) return await stop('halted', error.message);
     if (error instanceof RoutingError || error instanceof Halt) return await stop('needs_owner', error.message);
     throw error;
   }

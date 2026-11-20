@@ -67,7 +67,7 @@ export function createEgressProxy(options) {
     response.writeHead(405).end();
   });
 
-  const handle = async (request, client) => {
+  const handle = async (request, client, head) => {
     const refuse = (status, event) => {
       options.report({ type: 'egress_refused', ...event });
       client.end(`HTTP/1.1 ${status} Refused\r\n\r\n`);
@@ -90,7 +90,13 @@ export function createEgressProxy(options) {
     if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
       return refuse(403, { reason: 'private_address', host, role: grant.role, runId: grant.runId });
     }
+    // The grant may have been revoked while the name was being resolved.
+    const still = await readGrant(options.grants, proxyToken(request.headers['proxy-authorization']), clock.now());
+    if (!still) return refuse(407, { reason: 'no_valid_grant', host });
     const upstream = connect(addresses[0], port);
+    // A tunnel never outlives the grant that opened it.
+    const lifetime = setTimeout(() => upstream.destroy(), Math.max(0, new Date(still.expiresAt).getTime() - clock.now().getTime()));
+    upstream.on('close', () => clearTimeout(lifetime));
     upstream.setTimeout(IDLE_TIMEOUT_MS, () => upstream.destroy());
     upstream.on('error', () => client.destroy());
     upstream.on('close', () => client.destroy());
@@ -98,16 +104,17 @@ export function createEgressProxy(options) {
     upstream.on('connect', () => {
       options.report({ type: 'egress_allowed', host, role: grant.role, runId: grant.runId });
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head && head.length > 0) upstream.write(head); // bytes that arrived with the CONNECT request
       upstream.pipe(client);
       client.pipe(upstream);
     });
   };
 
-  server.on('connect', (request, client) => {
+  server.on('connect', (request, client, head) => {
     client.on('error', () => {});
     client.setTimeout(IDLE_TIMEOUT_MS, () => client.destroy());
     // Nothing a sandbox sends may take the service down: every failure ends this connection only.
-    handle(request, client).catch(() => client.destroy());
+    handle(request, client, head).catch(() => client.destroy());
   });
   return server;
 }
@@ -130,6 +137,7 @@ export function createModelGateway(options) {
     const name = match?.[1];
     if (!match || !Object.hasOwn(options.providers, name)) return refuse(404, 'unknown_provider');
     const provider = options.providers[name];
+    if (request.method !== 'POST') return refuse(405, 'method_not_allowed', { provider: name });
     const path = match[2] ?? '/';
     // Exact paths only, and nothing an upstream could normalise into another path.
     if (/[%\;]|\/\/|\/\.\.?(\/|$)/.test(path)) return refuse(400, 'invalid_path');

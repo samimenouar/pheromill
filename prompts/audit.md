@@ -1,3 +1,4 @@
+<!-- Not dispatched yet: this step is PLANNED (claim `scheduled-audits` in docs/status.md). -->
 # Step: audit
 
 You audit merged code, read-only, from a fresh session with no memory of how

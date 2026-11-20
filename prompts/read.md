@@ -1,3 +1,4 @@
+<!-- Not dispatched yet: this step is PLANNED (claim `reader-step` in docs/status.md). -->
 # Step: read
 
 You read untrusted material for another agent: a web page, a dependency's

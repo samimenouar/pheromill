@@ -157,3 +157,32 @@ test('git: attributes in the tree cannot hide files from a workspace', async () 
   await vcs.exportTree(sha, directory, []);
   assert.equal(existsSync(join(directory, 'src/a.js')), true);
 });
+
+test('git: file names are data, never patterns: spaces, brackets and pathspec magic change nothing', async () => {
+  const directory = await workspace('ws-names');
+  mkdirSync(join(directory, 'holdout'), { recursive: true });
+  writeFileSync(join(directory, 'holdout/planted.test.js'), 'the author recreated a hidden directory\n');
+  const names = ['docs/user guide.md', 'src/[draft].js', 'src/*.js', ':(top)src', ':!holdout'];
+  for (const name of names) {
+    mkdirSync(join(directory, name, '..'), { recursive: true });
+    writeFileSync(join(directory, name), 'content\n');
+  }
+  const patch = await vcs.collectPatch(base, directory, ['holdout/**']);
+  const { entries } = await vcs.canonicalize({ base, patches: [patch] });
+  const files = reconcile(parseUnifiedDiff(patch), entries);
+  assert.deepEqual(files.map((file) => file.path).sort(), [...names].sort(), 'every file is reported under its own name, and the hidden path is left out');
+  assert.equal(files.some((file) => file.unsafePath), false);
+
+  const onlyHidden = await workspace('ws-only-hidden');
+  mkdirSync(join(onlyHidden, 'holdout'), { recursive: true });
+  writeFileSync(join(onlyHidden, 'holdout/planted.test.js'), 'x\n');
+  assert.equal(await vcs.collectPatch(base, onlyHidden, ['holdout/**']), '', 'a step that only wrote to hidden paths changed nothing');
+});
+
+test('git: a mirror whose first fetch failed is not taken for a mirror', async () => {
+  const directory = join(root, 'broken-mirror.git');
+  await assert.rejects(() => cloneMirror(join(root, 'no-such-remote.git'), directory));
+  assert.equal(existsSync(directory), false, 'the service starts again from nothing instead of serving an empty mirror');
+  await cloneMirror(join(root, 'remote.git'), directory);
+  assert.equal(await new GitVcs({ mirror: directory }).head('main'), base);
+});

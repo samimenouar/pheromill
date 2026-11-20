@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -89,19 +89,24 @@ test('dispatcher: non-overlapping tickets run, overlapping ones wait, approved c
   assert.equal(forge.tickets.get('2').state, undefined, 'a held ticket is left untouched');
 });
 
-test('dispatcher: a rerouted ticket keeps its number, gets its risk label, and is capped', async () => {
+test('dispatcher: a rerouted ticket keeps its number, gets its risk label, and is capped until the owner restarts it', async () => {
   const core = fileDiff('src/domain/x.js', { added: ['x'], status: 'added' });
   const { ports, forge } = world({ implement: () => ({ patch: core }), review: () => approve }, [issue('5', ['src/app/x.js'])]);
-  const first = await dispatchTick({ startedKinds: [], history: [] }, config, ports);
+  const memory = { startedKinds: [], history: [] };
+  const first = await dispatchTick(memory, config, ports);
   assert.deepEqual(first.outcomes, { 5: 'rework' });
-  assert.equal(forge.tickets.get('5').state, 'rework');
-  assert.deepEqual(forge.changes.get('5').labels, ['risk:high']);
+  assert.deepEqual(forge.tickets.get('5').labels, ['risk:high', 'factory:rework']);
 
-  const history = [1, 2].map(() => ({ ticket: '5', type: 'ticket_outcome', outcome: 'rework' }));
-  forge.tickets.set('5', issue('5', ['src/app/x.js'], { labels: ['factory:rework'] }));
-  const capped = await dispatchTick({ startedKinds: [], history }, config, ports);
-  assert.deepEqual(capped.outcomes, { 5: 'needs_owner' });
-  assert.deepEqual(capped.started, []);
+  memory.history = ports.ledger.entries.filter((entry) => entry.type === 'ticket_outcome').map((entry) => ({ type: entry.type, ...entry.data }));
+  for (let sent = memory.history.length; sent < config.scheduling.maxReworks; sent += 1) memory.history.push({ ticket: '5', type: 'ticket_outcome', outcome: 'rework' });
+  const capped = await dispatchTick(memory, config, ports);
+  assert.deepEqual([capped.outcomes, capped.started], [{ 5: 'needs_owner' }, []]);
+  assert.match(forge.tickets.get('5').note, /fresh allowance/);
+  assert.equal(ports.ledger.ofType('ticket_outcome').at(-1).outcome, 'needs_owner', 'the hand-over to the owner is recorded');
+
+  forge.tickets.set('5', { ...forge.tickets.get('5'), labels: ['risk:high', 'factory:ready'] });
+  const restarted = await dispatchTick(memory, config, ports);
+  assert.deepEqual(restarted.started, ['5'], 'the owner relabels the ticket and it runs again, with a fresh allowance');
 });
 
 test('dispatcher: a frozen milestone defers every ticket that does not block one of its exit criteria', async () => {
@@ -142,36 +147,73 @@ test('dispatcher: an unexpected pipeline error stops that ticket only and is rec
   assert.match(forge.tickets.get('1').note, /sandbox host unreachable/);
 });
 
-test('dispatcher: at tier 0 a change that passed every gate enters the queue when a person approves it', async () => {
+test('dispatcher: at tier 0 a change that passed every gate enters the queue when a person approves that commit', async () => {
   const tierZero = { ...config, autonomy: { ...config.autonomy, tier: 0 } };
   const { ports, forge, queue } = world({ implement: (job) => ({ patch: patchFor(job) }), review: () => approve }, [issue('1', ['src/app/a.js'])]);
-  const first = await dispatchTick({ startedKinds: [], history: [] }, tierZero, ports);
+  const tick = () => dispatchTick({ startedKinds: [], history: [] }, tierZero, ports);
+  forge.approved.add('change-1'); // a label left on the change request by an earlier round
+  const first = await tick();
   assert.deepEqual(first.outcomes, { 1: 'needs_owner' });
   assert.match(forge.tickets.get('1').note, /add the label "factory:approved"/);
-  assert.deepEqual(queue().queue.pending, []);
-  const waiting = Object.keys(queue().awaiting);
-  assert.equal(waiting.length, 1);
+  assert.deepEqual([queue().queue.pending, Object.keys(queue().awaiting)], [[], ['change-1']]);
+  assert.equal(forge.approved.has('change-1'), false, 'an approval given before the gates passed approves nothing');
+  const reviewed = ports.vcs.published[0].sha;
 
-  forge.tickets.set('1', { ...forge.tickets.get('1'), labels: [] });
   forge.approved.add('unknown-change');
-  await dispatchTick({ startedKinds: [], history: [] }, tierZero, ports);
+  await tick();
   assert.deepEqual(queue().queue.pending, [], 'approving something that did not pass the gates does nothing');
-  forge.approved.add(waiting[0]);
-  const second = await dispatchTick({ startedKinds: [], history: [] }, tierZero, ports);
+  assert.match(forge.comments.at(-1).body, /not waiting for an approval/);
+
+  forge.heads.set('change-1', 'pushed-after-review');
+  forge.approved.add('change-1');
+  await tick();
+  assert.deepEqual([queue().queue.pending, forge.approved.size], [[], 0], 'an approval of another commit is refused and removed');
+  assert.match(forge.comments.at(-1).body, new RegExp(`points to pushed-after-review, and the commit that passed the gates is ${reviewed}`));
+
+  forge.heads.set('change-1', reviewed);
+  forge.approved.add('change-1');
+  const second = await tick();
   assert.deepEqual(second.outcomes, { 1: 'queued' });
-  assert.deepEqual(queue().queue.pending, waiting);
-  assert.deepEqual(queue().awaiting, {});
-  assert.equal(queue().changes[waiting[0]].sha, ports.vcs.published[0].sha, 'the approved commit is the reviewed one');
+  assert.deepEqual([queue().queue.pending, queue().awaiting, forge.approved.size], [['change-1'], {}, 0], 'the approval is spent');
+  assert.equal(queue().changes['change-1'].sha, reviewed, 'the approved commit is the reviewed one');
 });
 
-test('dispatcher: after a restart, a ticket left in progress with nobody working on it starts again', async () => {
+test('dispatcher: a change stops waiting for approval when the owner sends its ticket back to work', async () => {
+  const tierZero = { ...config, autonomy: { ...config.autonomy, tier: 0 } };
+  const { ports, forge, queue } = world({ implement: (job) => ({ patch: patchFor(job) }), review: () => approve }, [issue('1', ['src/app/a.js'])]);
+  const tick = () => dispatchTick({ startedKinds: [], history: [] }, tierZero, ports);
+  await tick();
+  assert.deepEqual(Object.keys(queue().awaiting), ['change-1']);
+  assert.deepEqual((await tick()).started, [], 'while it waits, its files stay taken');
+  assert.deepEqual(Object.keys(queue().awaiting), ['change-1']);
+
+  forge.tickets.set('1', { ...forge.tickets.get('1'), labels: ['factory:ready'] });
+  const again = await tick();
+  assert.deepEqual(again.started, ['1'], 'a ticket is never blocked by its own abandoned change');
+  assert.equal(ports.vcs.published.length, 2);
+  assert.equal(queue().awaiting['change-1'].sha, ports.vcs.published[1].sha, 'what waits now is the new commit');
+});
+
+test('dispatcher: a ticket left in progress with nobody working on it starts again, a bounded number of times', async () => {
   const { ports, forge } = world({ implement: (job) => ({ patch: patchFor(job) }), review: () => approve }, [issue('7', ['src/app/a.js'], { labels: ['factory:in-progress'] })]);
   const memory = { startedKinds: [], history: [] };
-  await dispatchTick(memory, config, ports);
-  assert.equal(forge.tickets.get('7').state, 'rework');
+  const first = await dispatchTick(memory, config, ports);
+  assert.deepEqual(first.outcomes, { 7: 'queued' }, 'recovered and worked in the same tick');
+  assert.deepEqual(ports.ledger.ofType('ticket_outcome').map((entry) => entry.outcome), ['rework', 'queued']);
+
   forge.tickets.set('8', issue('8', ['src/app/b.js'], { labels: ['factory:in-progress'] }));
-  await dispatchTick(memory, config, ports);
-  assert.equal(forge.tickets.get('8').state, undefined, 'recovery happens once, at start-up');
+  for (let sent = 0; sent < config.scheduling.maxReworks; sent += 1) memory.history.push({ ticket: '8', type: 'ticket_outcome', outcome: 'rework' });
+  const later = await dispatchTick(memory, config, ports);
+  assert.deepEqual(later.outcomes, { 8: 'needs_owner' }, 'recovery happens on every tick, and a ticket that keeps being interrupted goes to the owner');
+});
+
+test('dispatcher: a ticket stopped by a halt goes back to the pile without using its allowance', async () => {
+  const { ports, forge } = world({ implement: (job) => ({ patch: patchFor(job) }), review: () => approve }, [issue('1', ['src/app/a.js'])]);
+  const result = await dispatchTick({ startedKinds: [], history: [] }, config, { ...ports, halted: async () => true });
+  assert.deepEqual(result.outcomes, { 1: 'halted' });
+  assert.deepEqual(forge.tickets.get('1').labels, ['factory:rework']);
+  assert.deepEqual(ports.ledger.ofType('ticket_outcome').map((entry) => entry.outcome), ['halted']);
+  assert.equal(ports.runner.jobs.length, 0);
 });
 
 test('dispatcher: a failure while recording an outcome never leaves a ticket in progress', async () => {
@@ -213,14 +255,32 @@ test('spool: a job crosses the zone boundary as a file and its answer is sanitis
 test('spool: an answer to an earlier job with the same identifier is never taken for the new one', async () => {
   const spool = mkdtempSync(join(tmpdir(), 'pheromill-spool-'));
   mkdirSync(join(spool, 'results'), { recursive: true });
+  mkdirSync(join(spool, 'jobs'), { recursive: true });
+  const stale = `t7-1.${'0'.repeat(32)}.json`;
+  writeFileSync(join(spool, 'jobs', stale), JSON.stringify({ runId: 't7-1' }));
   const client = new SpoolClient({ spool, pollMs: 5, timeoutMs: 400 });
   const pending = client.run({ runId: 't7-1', step: 'implement' });
   await new Promise((resolve) => setTimeout(resolve, 30));
-  // What a runner would write if it finished a job submitted before a restart of the control zone.
-  writeFileSync(join(spool, 'results', 't7-1.json'), JSON.stringify({ patch: 'patch for the old job', nonce: 'stale' }));
+  const [name] = readdirSync(join(spool, 'jobs'));
+  assert.notEqual(name, stale, 'the earlier submission was withdrawn');
+  // What a runner would write if it finished the job submitted before a restart of the control zone.
+  writeFileSync(join(spool, 'results', stale), JSON.stringify({ patch: 'patch for the old job' }));
   await new Promise((resolve) => setTimeout(resolve, 30));
-  const job = JSON.parse(readFileSync(join(spool, 'jobs', 't7-1.json'), 'utf8'));
-  writeFileSync(join(spool, 'results', 't7-1.json'), JSON.stringify({ patch: 'patch for the new job', nonce: job.nonce }));
+  writeFileSync(join(spool, 'results', name), JSON.stringify({ patch: 'patch for the new job' }));
   assert.equal((await pending).patch, 'patch for the new job');
   rmSync(spool, { recursive: true, force: true });
+});
+
+test('spool: oversized submissions and a spool directory replaced by a link are refused', async () => {
+  const spool = mkdtempSync(join(tmpdir(), 'pheromill-spool-'));
+  const client = new SpoolClient({ spool, pollMs: 5, timeoutMs: 50 });
+  await assert.rejects(() => client.run({ runId: 't1-1', step: 'review', patches: ['x'.repeat(17 * 1024 * 1024)] }), /too large to submit/);
+  const victim = mkdtempSync(join(tmpdir(), 'pheromill-victim-'));
+  writeFileSync(join(victim, `t9-1.${'a'.repeat(32)}.json`), '{}');
+  rmSync(join(spool, 'results'), { recursive: true, force: true });
+  symlinkSync(victim, join(spool, 'results'));
+  await assert.rejects(() => client.run({ runId: 't9-1', step: 'review' }), /not a directory/);
+  assert.deepEqual(readdirSync(victim).length, 1, 'nothing outside the spool was touched');
+  rmSync(spool, { recursive: true, force: true });
+  rmSync(victim, { recursive: true, force: true });
 });

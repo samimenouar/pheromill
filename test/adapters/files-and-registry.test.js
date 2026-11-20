@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { FileLedger, JsonStore, loadConfig, readUntrustedJson } from '../../src/adapters/files.js';
+import { FileLedger, JsonStore, loadConfig, readUntrustedJson, trackedFiles } from '../../src/adapters/files.js';
 import { NpmRegistry } from '../../src/adapters/npm-registry.js';
 import { verifyChain } from '../../src/domain/ledger.js';
 
@@ -71,7 +72,7 @@ test('npm registry: metadata for the dependency gate comes from the package docu
   const document = {
     time: { created: '2014-03-01T00:00:00Z', '1.3.0': '2018-04-01T00:00:00Z' },
     versions: {
-      '1.2.0': {},
+      '1.2.0': { gypfile: true },
       '1.3.0': { license: 'MIT', scripts: { test: 'x', postinstall: 'node setup.js' }, deprecated: 'use String.prototype.padStart' },
     },
   };
@@ -92,8 +93,46 @@ test('npm registry: metadata for the dependency gate comes from the package docu
     deprecated: true,
   });
   assert.equal(seen[0], 'https://registry.npmjs.org/@scope%2Fleft-pad');
+  const native = await registry.metadata({ ecosystem: 'npm', name: 'left-pad', version: '1.2.0' });
+  assert.deepEqual(native.installScripts, ['native-build'], 'a native build at install time runs code like any install script');
   assert.equal(await registry.metadata({ ecosystem: 'npm', name: 'left-pad', version: '9.9.9' }), null);
   assert.equal(await registry.metadata({ ecosystem: 'npm', name: 'missing', version: '1.0.0' }), null);
   assert.equal(await registry.metadata({ ecosystem: 'pypi', name: 'left-pad', version: '1.3.0' }), null);
   await assert.rejects(() => registry.metadata({ ecosystem: 'npm', name: 'broken', version: '1.0.0' }), /status 500/);
+});
+
+test('files: a record cut short by a crash is not an entry, and the next append starts on a clean line', async () => {
+  const path = join(root, 'torn.jsonl');
+  await new FileLedger(path).append('a', { n: 1 });
+  const intact = readFileSync(path, 'utf8');
+  writeFileSync(path, `${intact}{"seq":2,"type":"b","da`);
+  assert.deepEqual((await new FileLedger(path).entries()).map((entry) => entry.type), ['a']);
+  await new FileLedger(path).append('c', { n: 3 });
+  const entries = await new FileLedger(path).entries();
+  assert.deepEqual(entries.map((entry) => [entry.seq, entry.type]), [[1, 'a'], [2, 'c']]);
+  assert.equal(verifyChain(entries).valid, true);
+});
+
+test('files: an operation recorded once stays recorded once when it is replayed, also after a restart', async () => {
+  const path = join(root, 'once.jsonl');
+  const ledger = new FileLedger(path);
+  await Promise.all([ledger.appendOnce('merge', 'abc', { changes: ['1'] }), ledger.appendOnce('merge', 'abc', { changes: ['1'] })]);
+  await new FileLedger(path).appendOnce('merge', 'abc', { changes: ['1'] });
+  await new FileLedger(path).appendOnce('merge', 'def', { changes: ['2'] });
+  await new FileLedger(path).appendOnce('evict', 'abc', { change: '1' });
+  const entries = await new FileLedger(path).entries();
+  assert.deepEqual(entries.map((entry) => [entry.type, entry.data.identity]), [['merge', 'abc'], ['merge', 'def'], ['evict', 'abc']]);
+  assert.equal(verifyChain(entries).valid, true);
+});
+
+test('files: the repository scan reads tracked text files and never follows a tracked link', async () => {
+  const directory = join(root, 'checkout');
+  mkdirSync(directory);
+  const env = { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  execFileSync('git', ['init', '--quiet', directory], { env });
+  writeFileSync(join(root, 'outside.txt'), 'a secret outside the checkout\n');
+  writeFileSync(join(directory, 'a.md'), 'text\n');
+  writeFileSync(join(directory, 'blob.bin'), Buffer.from([1, 0, 2]));
+  symlinkSync(join(root, 'outside.txt'), join(directory, 'link.md'));
+  assert.deepEqual(await trackedFiles(directory), [{ path: 'a.md', content: 'text\n' }]);
 });

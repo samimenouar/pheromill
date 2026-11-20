@@ -73,9 +73,12 @@ function readHeader(file, line) {
   } else if (line.startsWith('Binary files ') || line === 'GIT binary patch') {
     file.binary = true;
   } else if (line.startsWith('--- ')) {
-    return line === '--- /dev/null' || line === `--- a/${file.oldPath}`;
+    // git appends a tab after a name that contains a space.
+    const name = line.replace(/\t$/, '');
+    return name === '--- /dev/null' || name === `--- a/${file.oldPath}`;
   } else if (line.startsWith('+++ ')) {
-    return line === '+++ /dev/null' || line === `+++ b/${file.path}`;
+    const name = line.replace(/\t$/, '');
+    return name === '+++ /dev/null' || name === `+++ b/${file.path}`;
   } else {
     return false;
   }

@@ -17,6 +17,9 @@ const STATE_LABELS = {
 
 /** Only people the repository already trusts can write text that agents will read. */
 const TRUSTED_AUTHORS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+const APPROVED = 'factory:approved';
+const PAGE_SIZE = 100;
+const MAX_PAGES = 20;
 
 const base64url = (value) => Buffer.from(value).toString('base64url');
 
@@ -54,8 +57,9 @@ export function appTokenProvider(options) {
 export class GitHubForge {
   /**
    * @param {{repository: string, trunk: string, token: () => Promise<string>, requiredChecks: string[], checksAppId?: number|null,
-   *   fetch?: typeof fetch, apiUrl?: string, pollMs?: number, timeoutMs?: number,
-   *   sleep?: (ms: number) => Promise<void>}} options
+   *   trustedAppId?: number|null, fetch?: typeof fetch, apiUrl?: string, pollMs?: number, timeoutMs?: number,
+   *   requestTimeoutMs?: number, sleep?: (ms: number) => Promise<void>}} options
+   *   `trustedAppId`: issues created by this GitHub App (the factory itself) are trusted like a collaborator's.
    */
   constructor(options) {
     this.repository = options.repository;
@@ -63,16 +67,20 @@ export class GitHubForge {
     this.token = options.token;
     this.requiredChecks = options.requiredChecks;
     this.checksAppId = options.checksAppId ?? null;
+    this.trustedAppId = options.trustedAppId ?? null;
     this.fetch = options.fetch ?? globalThis.fetch;
     this.apiUrl = options.apiUrl ?? 'https://api.github.com';
     this.pollMs = options.pollMs ?? 15_000;
     this.timeoutMs = options.timeoutMs ?? 60 * 60 * 1000;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  async api(method, path, body) {
+  /** One request, bounded in time from the first byte sent to the last byte read. */
+  async api(method, path, body, { allow = [] } = {}) {
     const response = await this.fetch(`${this.apiUrl}/repos/${this.repository}${path}`, {
       method,
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
       headers: {
         authorization: `Bearer ${await this.token()}`,
         accept: 'application/vnd.github+json',
@@ -81,18 +89,47 @@ export class GitHubForge {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (allow.includes(response.status)) return null;
     if (!response.ok) throw new Error(`GitHub ${method} ${path} failed with status ${response.status}.`);
     return response.status === 204 ? null : response.json();
+  }
+
+  /** Every page of a list endpoint. `pick` extracts the items when the answer wraps them. */
+  async list(path, pick = (answer) => answer) {
+    const items = [];
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const batch = pick(await this.api('GET', `${path}${path.includes('?') ? '&' : '?'}per_page=${PAGE_SIZE}&page=${page}`));
+      items.push(...batch);
+      if (batch.length < PAGE_SIZE) return items;
+    }
+    throw new Error(`GitHub GET ${path} has more than ${MAX_PAGES * PAGE_SIZE} items.`);
+  }
+
+  /**
+   * Remove some labels and add others, one label at a time. The label set is
+   * never replaced as a whole, so a label a person adds or removes meanwhile
+   * (an approval, for instance) is never overwritten from a stale copy.
+   */
+  async swapLabels(number, shouldRemove, add) {
+    const current = (await this.list(`/issues/${number}/labels`)).map((label) => label.name);
+    for (const name of current.filter((label) => shouldRemove(label) && !add.includes(label))) {
+      await this.api('DELETE', `/issues/${number}/labels/${encodeURIComponent(name)}`, undefined, { allow: [404] });
+    }
+    const missing = add.filter((label) => !current.includes(label));
+    if (missing.length > 0) await this.api('POST', `/issues/${number}/labels`, { labels: missing });
   }
 
   // --- Forge port -----------------------------------------------------------
 
   async listTickets(label) {
-    const issues = await this.api('GET', `/issues?state=open&per_page=100&labels=${encodeURIComponent(label)}`);
-    // An issue is a ticket only if a trusted person wrote it: its author can edit
+    const issues = await this.list(`/issues?state=open&labels=${encodeURIComponent(label)}`);
+    // An issue is a ticket only if a trusted party wrote it: its author can edit
     // the text at any time, including after it was labelled.
+    const trusted = (issue) =>
+      TRUSTED_AUTHORS.includes(issue.author_association) ||
+      (this.trustedAppId !== null && issue.performed_via_github_app?.id === this.trustedAppId);
     return issues
-      .filter((issue) => !issue.pull_request && TRUSTED_AUTHORS.includes(issue.author_association))
+      .filter((issue) => !issue.pull_request && trusted(issue))
       .map((issue) => ({
         id: String(issue.number),
         title: issue.title,
@@ -103,10 +140,8 @@ export class GitHubForge {
   }
 
   async setTicketState(id, state, note) {
-    const current = (await this.api('GET', `/issues/${id}/labels`)).map((label) => label.name);
-    const kept = current.filter((name) => !Object.values(STATE_LABELS).includes(name));
-    const next = STATE_LABELS[state] ? [...kept, STATE_LABELS[state]] : kept;
-    await this.api('PUT', `/issues/${id}/labels`, { labels: next });
+    const next = STATE_LABELS[state] ? [STATE_LABELS[state]] : [];
+    await this.swapLabels(id, (label) => Object.values(STATE_LABELS).includes(label), next);
     if (note) await this.api('POST', `/issues/${id}/comments`, { body: note });
     if (state === 'done') await this.api('PATCH', `/issues/${id}`, { state: 'closed', state_reason: 'completed' });
     if (state === 'split') await this.api('PATCH', `/issues/${id}`, { state: 'closed', state_reason: 'not_planned' });
@@ -132,10 +167,23 @@ export class GitHubForge {
     return { id: String(pull.number) };
   }
 
-  /** Change requests a person with triage rights approved for the merge queue. */
+  /**
+   * Change requests a person with triage rights approved for the merge queue,
+   * each with the commit the approval was given on (the head at this moment).
+   */
   async approvedChanges() {
-    const issues = await this.api('GET', `/issues?state=open&per_page=100&labels=${encodeURIComponent('factory:approved')}`);
-    return issues.filter((issue) => issue.pull_request).map((issue) => String(issue.number));
+    const issues = await this.list(`/issues?state=open&labels=${encodeURIComponent(APPROVED)}`);
+    const approved = [];
+    for (const issue of issues.filter((entry) => entry.pull_request)) {
+      const pull = await this.api('GET', `/pulls/${issue.number}`);
+      approved.push({ id: String(issue.number), sha: pull.head.sha });
+    }
+    return approved;
+  }
+
+  /** Withdraw an approval: it was consumed, or the change it was given on is gone. */
+  async clearApproval(changeId) {
+    await this.api('DELETE', `/issues/${changeId}/labels/${encodeURIComponent(APPROVED)}`, undefined, { allow: [404] });
   }
 
   async comment(changeId, body) {
@@ -143,36 +191,36 @@ export class GitHubForge {
   }
 
   async setLabels(changeId, labels) {
-    const current = (await this.api('GET', `/issues/${changeId}/labels`)).map((label) => label.name);
-    const kept = current.filter((name) => !name.startsWith('risk:'));
-    await this.api('PUT', `/issues/${changeId}/labels`, { labels: [...new Set([...kept, ...labels])] });
+    await this.swapLabels(changeId, (label) => label.startsWith('risk:'), labels);
   }
 
   // --- Checks port ----------------------------------------------------------
 
   /** The latest run of each required check, from the expected app when one is configured. */
   async latestRuns(sha) {
-    const result = await this.api('GET', `/commits/${sha}/check-runs?per_page=100`);
-    const runs = result.check_runs.filter((run) => this.checksAppId === null || run.app?.id === this.checksAppId);
-    return this.requiredChecks.map((name) => ({ name, run: runs.filter((entry) => entry.name === name).sort((a, b) => b.id - a.id)[0] ?? null }));
+    const all = await this.list(`/commits/${sha}/check-runs`, (answer) => answer.check_runs);
+    const runs = all.filter((run) => this.checksAppId === null || run.app?.id === this.checksAppId);
+    return this.requiredChecks.map((name) => ({ name, run: runs.filter((entry) => entry.name === name).sort((x, y) => y.id - x.id)[0] ?? null }));
   }
 
-  /** Every required check must have completed successfully; a missing one is pending. */
-  async status(sha) {
+  /** Verdict and failure signature from one snapshot of the check runs. */
+  async verdict(sha) {
     const latest = await this.latestRuns(sha);
-    if (latest.some(({ run }) => run?.status === 'completed' && run.conclusion !== 'success')) return 'fail';
-    return latest.every(({ run }) => run?.status === 'completed') ? 'pass' : 'pending';
+    const failed = latest.find(({ run }) => run?.status === 'completed' && run.conclusion !== 'success');
+    if (failed) return { status: 'fail', signature: `${failed.name}: ${failed.run.output?.title ?? failed.run.conclusion}` };
+    // Every required check must have completed successfully; a missing one is pending.
+    return { status: latest.every(({ run }) => run?.status === 'completed') ? 'pass' : 'pending', signature: null };
+  }
+
+  async status(sha) {
+    return (await this.verdict(sha)).status;
   }
 
   async wait(sha) {
     const deadline = Date.now() + this.timeoutMs;
     for (;;) {
-      const status = await this.status(sha);
-      if (status === 'pass') return { status, signature: null };
-      if (status === 'fail') {
-        const failed = (await this.latestRuns(sha)).find(({ run }) => run?.status === 'completed' && run.conclusion !== 'success');
-        return { status, signature: failed ? `${failed.name}: ${failed.run.output?.title ?? failed.run.conclusion}` : 'unknown' };
-      }
+      const verdict = await this.verdict(sha);
+      if (verdict.status !== 'pending') return verdict;
       if (Date.now() >= deadline) return { status: 'fail', signature: 'checks timed out' };
       await this.sleep(this.pollMs);
     }
@@ -181,11 +229,7 @@ export class GitHubForge {
   // --- Settings as code -----------------------------------------------------
 
   async readSettings() {
-    const [repository, labels, summaries] = await Promise.all([
-      this.api('GET', ''),
-      this.api('GET', '/labels?per_page=100'),
-      this.api('GET', '/rulesets?per_page=100'),
-    ]);
+    const [repository, labels, summaries] = await Promise.all([this.api('GET', ''), this.list('/labels'), this.list('/rulesets')]);
     const rulesets = await Promise.all(summaries.map((summary) => this.api('GET', `/rulesets/${summary.id}`)));
     return { repository, labels, rulesets };
   }

@@ -10,7 +10,8 @@
  * @property {(change: {ticketId: string, branch: string, title: string, body: string, labels: string[]}) => Promise<{id: string}>} openChange
  * @property {(changeId: string, body: string) => Promise<void>} comment
  * @property {(changeId: string, labels: string[]) => Promise<void>} setLabels
- * @property {() => Promise<string[]>} approvedChanges change requests a person approved for the merge queue
+ * @property {() => Promise<Array<{id: string, sha: string|null}>>} approvedChanges change requests a person approved, with the commit each points to
+ * @property {(changeId: string) => Promise<void>} clearApproval withdraw an approval; not an error when there is none
  *
  * @typedef {object} Vcs version control, run in the control zone only
  * @property {(ref: string) => Promise<string>} head commit of a branch
@@ -35,6 +36,7 @@
  *
  * @typedef {object} Ledger append-only, hash-chained record
  * @property {(type: string, data: object) => Promise<void>} append
+ * @property {(type: string, identity: string, data: object) => Promise<void>} appendOnce append unless an entry of this type and identity exists
  *
  * @typedef {object} Clock
  * @property {() => Date} now

@@ -58,7 +58,8 @@ function forgeToken(env) {
         installationId: required(env, 'PHEROMILL_GITHUB_INSTALLATION_ID'),
         privateKey: await readFile(required(env, 'PHEROMILL_GITHUB_PRIVATE_KEY_FILE'), 'utf8'),
         repository,
-        permissions: { contents: 'write', pull_requests: 'write', issues: 'write', checks: 'read' },
+        // Without "workflows", a change that edits a pipeline file cannot be pushed: it stops at the owner.
+        permissions: { contents: 'write', pull_requests: 'write', issues: 'write', checks: 'read', ...(env.PHEROMILL_GITHUB_WORKFLOWS === 'write' ? { workflows: 'write' } : {}) },
       });
   }
   const token = required(env, 'PHEROMILL_FORGE_TOKEN');
@@ -79,15 +80,17 @@ async function control(io) {
   const runner = new SpoolClient({ spool: join(state, 'spool') });
   const registry = new NpmRegistry();
 
+  // Red button: while this file exists, no step starts, nothing is published and nothing lands.
+  const halted = () => stat(join(state, 'HALT')).then(() => true, () => false);
+  // Tickets the factory proposes itself (the children of a split) are trusted like a collaborator's.
+  const trustedAppId = io.env.PHEROMILL_GITHUB_APP_ID ? Number(io.env.PHEROMILL_GITHUB_APP_ID) : null;
+
   const ports = async () => {
     await vcs.fetch();
     const config = await trunkConfig(vcs, trunk);
-    const forge = new GitHubForge({ repository, trunk, token, requiredChecks: config.forge.requiredChecks, checksAppId: config.forge.checksAppId });
-    return { config, ports: { forge, checks: forge, vcs, ledger, store, registry, runner, clock: { now: () => new Date() } } };
+    const forge = new GitHubForge({ repository, trunk, token, trustedAppId, requiredChecks: config.forge.requiredChecks, checksAppId: config.forge.checksAppId });
+    return { config, ports: { forge, checks: forge, vcs, ledger, store, registry, runner, halted, clock: { now: () => new Date() } } };
   };
-
-  // Red button: while this file exists, nothing is dispatched and nothing lands.
-  const halted = () => stat(join(state, 'HALT')).then(() => true, () => false);
 
   const loop = async (name, tick) => {
     for (;;) {
@@ -117,10 +120,11 @@ async function runner(io) {
   const state = required(io.env, 'PHEROMILL_STATE_DIR');
   const [uid, gid] = [process.getuid?.(), process.getgid?.()];
   const { vcs, trunk } = await mirror(io.env, readToken(io.env));
+  const launcher = new DockerLauncher();
   const sandboxRunner = new SandboxRunner({
     config: await trunkConfig(vcs, trunk),
     vcs,
-    launcher: new DockerLauncher(),
+    launcher,
     workRoot: join(state, 'work'),
     grants: join(state, 'grants'),
     prompts: PROMPTS,
@@ -131,6 +135,8 @@ async function runner(io) {
   if (`${uid}:${gid}` !== sandboxRunner.config.sandbox.user) {
     throw new Error(`The runner must run as sandbox.user (${sandboxRunner.config.sandbox.user}); it runs as ${uid}:${gid}.`);
   }
+  const leftovers = await launcher.sweep(); // sandboxes of a runner that was killed have nobody to stop them
+  if (leftovers > 0) io.out(`runner: removed ${leftovers} sandbox(es) left by a previous run`);
   io.out(`runner: serving ${join(state, 'spool')}`);
   await serveSpool({
     spool: join(state, 'spool'),

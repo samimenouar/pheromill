@@ -42,7 +42,11 @@ jobs:
       - name: Resolve a test image to an immutable identifier
         run: |
           docker pull --quiet busybox:stable
-          echo "PHEROMILL_TEST_IMAGE=$(docker image inspect --format '{{.Id}}' busybox:stable)" >> "$GITHUB_ENV"
+          image="$(docker image inspect --format '{{.Id}}' busybox:stable)"
+          case "$image" in
+            sha256:*) echo "PHEROMILL_TEST_IMAGE=$image" >> "$GITHUB_ENV" ;;
+            *) echo "No immutable identifier for the test image: the sandbox proofs would be skipped." >&2; exit 1 ;;
+          esac
       - run: node --test "integration/*.test.js"
       - name: Validate the compose file
         working-directory: deploy

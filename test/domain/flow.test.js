@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { arbitrate, budgetFor, detectLoop, exceeded, nearLimit, usage } from '../../src/domain/budget.js';
+import { arbitrate, budgetFor, detectLoop, exceeded, nearLimit, returnedFinding, usage } from '../../src/domain/budget.js';
 import { createQueue, dequeue, enqueue, forget, plan, recordResult, settle } from '../../src/domain/merge-queue.js';
 import { debtIsDue, selectRunnable } from '../../src/domain/scheduler.js';
 import { admit, closure, parseTicket, renderTicketBody, validateTicket } from '../../src/domain/ticket.js';
@@ -239,4 +239,30 @@ test('merge queue: a result can be forgotten when its commit can no longer land'
   const clean = recordResult(fill(queueConfig, ['1']), plan(fill(queueConfig, ['1']))[0].key, 'pass');
   assert.deepEqual(forget(clean, plan(fill(queueConfig, ['1']))[0].key).results, {});
   assert.equal(forget(clean, 'e0:unknown'), clean);
+});
+
+test('scheduler: a debt ticket that can run is not passed over because another one is blocked', () => {
+  const ready = [
+    { id: 'f1', kind: 'feature', likelyFiles: ['a/**'] },
+    { id: 'd1', kind: 'debt', likelyFiles: ['busy/**'] },
+    { id: 'd2', kind: 'debt', likelyFiles: ['c/**'] },
+  ];
+  const active = [{ id: 'ticket 9', likelyFiles: ['busy/x.js'] }];
+  const result = selectRunnable(ready, active, { maxParallelTickets: 2, featuresPerDebtTicket: 4, startedKinds: ['feature', 'feature', 'feature', 'feature'] });
+  assert.deepEqual(result.start.map((t) => t.id), ['d2']);
+  assert.deepEqual(result.held, [{ id: 'f1', reason: 'capacity' }, { id: 'd1', reason: 'overlaps ticket 9' }]);
+});
+
+test('ticket: list markers of every common style are read; paths that climb or repeat a separator are refused', () => {
+  const body = formBody.replace('- [ ] A reset link is emailed', '+ A reset link is emailed').replace('- [ ] The link expires after one hour', '1) The link expires after one hour');
+  assert.deepEqual(parseTicket({ id: '1', title: 'Reset', body, labels: [], milestone: null }).acceptanceCriteria, ['A reset link is emailed', 'The link expires after one hour']);
+  const valid = { id: '1', title: 'Reset', description: 'd', acceptanceCriteria: ['It works'], likelyFiles: ['src/auth/**'], points: 2, kind: 'feature', wellFormed: true };
+  assert.deepEqual(validateTicket(valid, config), []);
+  for (const file of ['src/../secrets.js', './src/a.js', 'src//a.js', '..']) assert.ok(validateTicket({ ...valid, likelyFiles: [file] }, config).length > 0, file);
+  assert.ok(validateTicket({ ...valid, acceptanceCriteria: ['It works\n### Points\n\n1'] }, config).length > 0, 'a criterion cannot smuggle another section of the form');
+});
+
+test('loop detection: a finding raised again after it was refuted is named', () => {
+  assert.equal(returnedFinding({ refutedFingerprints: ['aa', 'bb'], raisedFingerprints: ['cc', 'bb'] }), 'bb');
+  assert.equal(returnedFinding({ refutedFingerprints: ['aa'], raisedFingerprints: ['cc'] }), null);
 });

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { cloneMirror, GitVcs } from '../../src/adapters/git.js';
-import { roleOf, SandboxRunner } from '../../src/adapters/sandbox-runner.js';
+import { DockerLauncher, roleOf, SandboxRunner } from '../../src/adapters/sandbox-runner.js';
 import { parseUnifiedDiff } from '../../src/domain/diff.js';
 import { testConfig } from '../helpers.js';
 
@@ -159,4 +159,42 @@ test('runner: a report that is a link to a host file, or a job with a crafted id
   for (const bad of [{ runId: '../../etc' }, { runId: 'T7' }, { step: '../x' }, { step: 'implement.md' }]) {
     await assert.rejects(() => runner(() => {}).run(job(bad)), /Invalid run or step identifier/);
   }
+});
+
+test('runner: a job is only launched on the harness family it was routed to', async () => {
+  const agent = () => assert.fail('nothing may be launched');
+  await assert.rejects(() => runner(agent).run(job({ route: { harness: 'alpha', model: 'model-x', family: 'openai' } })), /is not the openai harness this job was routed to/);
+  await assert.rejects(() => runner(agent).run(job({ route: { harness: 'ghost', model: 'model-x', family: 'anthropic' } })), /routed to/);
+});
+
+test('runner: whatever happens to a step, its workspace is removed and its token revoked', async () => {
+  const failing = runner(({ workspace }) => {
+    mkdirSync(join(workspace, 'locked/inner'), { recursive: true });
+    writeFileSync(join(workspace, 'locked/inner/file'), 'x');
+    chmodSync(join(workspace, 'locked'), 0o000);
+    throw new Error('container runtime unreachable');
+  });
+  await assert.rejects(() => failing.run(job({ runId: 't7-fail' })), /container runtime unreachable/);
+  assert.deepEqual(readdirSync(join(root, 'work')), [], 'a directory the step made unreadable is removed all the same');
+  assert.deepEqual(readdirSync(join(root, 'grants')), []);
+});
+
+test('docker launcher: a step that passes its time limit is killed, and sandboxes left by a dead runner are swept', async () => {
+  const bin = join(root, 'fake-docker');
+  writeFileSync(
+    bin,
+    ['#!/bin/sh', 'state="$(dirname "$0")"', 'case "$1" in', '  ps) cat "$state/containers" 2>/dev/null ;;', '  rm) shift; shift; echo "$@" > "$state/removed" ;;', '  kill) touch "$state/killed-$2" ;;', '  *) while [ ! -e "$state/killed-box" ]; do sleep 0.05; done; exit 137 ;;', 'esac', ''].join('\n'),
+    { mode: 0o755 },
+  );
+  const launcher = new DockerLauncher(bin);
+  const result = await launcher.launch({ name: 'box', args: ['run', '--name', 'box'], env: {}, timeoutMs: 100 });
+  assert.deepEqual([result.exitCode, result.timedOut], [137, true]);
+  const quick = await new DockerLauncher('/bin/true').launch({ name: 'ok', args: [], env: {}, timeoutMs: 5000 });
+  assert.deepEqual([quick.exitCode, quick.timedOut], [0, false]);
+  await assert.rejects(() => new DockerLauncher(join(root, 'no-such-binary')).launch({ name: 'x', args: [], env: {}, timeoutMs: 100 }));
+
+  assert.equal(await launcher.sweep(), 0);
+  writeFileSync(join(root, 'containers'), 'abc123\ndef456\n');
+  assert.equal(await launcher.sweep(), 2);
+  assert.equal(readFileSync(join(root, 'removed'), 'utf8').trim(), 'abc123 def456');
 });

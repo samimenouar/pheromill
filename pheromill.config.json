@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "project": {
+    "name": "pheromill",
+    "trunk": "main"
+  },
+  "forge": {
+    "kind": "github",
+    "repository": "samimenouar/pheromill",
+    "requiredChecks": [
+      "verify",
+      "sandbox"
+    ]
+  },
+  "paths": {
+    "reserved": [
+      "pheromill.config.json",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "LICENSE",
+      "SECURITY.md",
+      "package.json",
+      ".gitattributes",
+      ".gitignore",
+      ".dockerignore",
+      ".github/**",
+      "deploy/**",
+      "proofs/**",
+      "prompts/**",
+      "scripts/**",
+      "template/**",
+      "integration/**",
+      "bin/**",
+      "src/**"
+    ],
+    "core": [],
+    "tests": [
+      "test/**"
+    ],
+    "holdout": [
+      "holdout/**"
+    ],
+    "queueOwned": [
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock"
+    ],
+    "snapshots": [],
+    "thresholds": [
+      "scripts/verify.js",
+      "package.json"
+    ],
+    "production": [
+      "src/**",
+      "bin/**",
+      "deploy/**",
+      "prompts/**",
+      "template/**"
+    ]
+  },
+  "architecture": {
+    "layers": [
+      {
+        "name": "domain",
+        "paths": [
+          "src/domain/**"
+        ],
+        "mayImport": []
+      },
+      {
+        "name": "application",
+        "paths": [
+          "src/application/**"
+        ],
+        "mayImport": [
+          "domain"
+        ]
+      },
+      {
+        "name": "adapters",
+        "paths": [
+          "src/adapters/**"
+        ],
+        "mayImport": [
+          "domain",
+          "application"
+        ]
+      },
+      {
+        "name": "cli",
+        "paths": [
+          "src/cli/**"
+        ],
+        "mayImport": [
+          "domain",
+          "application",
+          "adapters"
+        ]
+      }
+    ]
+  },
+  "providers": {},
+  "harnesses": {},
+  "routing": [],
+  "egress": {},
+  "autonomy": {
+    "tier": 0,
+    "promotion": [
+      {},
+      {},
+      {}
+    ]
+  }
+}

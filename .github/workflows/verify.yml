@@ -1,0 +1,59 @@
+# The workflow only calls the verify command; every rule lives in the
+# repository. Actions are pinned by commit, the token is read-only, and no
+# secret is used, so a pull request from a fork runs exactly the same checks.
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main, "queue/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: node scripts/verify.js
+
+  sandbox:
+    # Proves the sandbox hardening against a real container runtime.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Resolve a test image to an immutable identifier
+        run: |
+          docker pull --quiet busybox:stable
+          image="$(docker image inspect --format '{{.Id}}' busybox:stable)"
+          case "$image" in
+            sha256:*) echo "PHEROMILL_TEST_IMAGE=$image" >> "$GITHUB_ENV" ;;
+            *) echo "No immutable identifier for the test image: the sandbox proofs would be skipped." >&2; exit 1 ;;
+          esac
+      - run: node --test "integration/*.test.js"
+      - name: Validate the compose file
+        working-directory: deploy
+        env:
+          PHEROMILL_IMAGE: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          PHEROMILL_REPOSITORY: owner/name
+          DOCKER_GID: "999"
+        run: |
+          touch control.env egress.env
+          docker compose config --quiet

@@ -1,0 +1,1518 @@
+{
+  "claims": [
+    {
+      "id": "ticket-floor-and-ceiling",
+      "area": "Tickets and scheduling",
+      "claim": "A ticket is dispatched only with 1 to 5 points, acceptance criteria and likely files",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "ticket: a micro-fix, an oversized ticket or a ticket without criteria is not dispatchable"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an invalid ticket is never dispatched"
+        }
+      ]
+    },
+    {
+      "id": "ticket-form-strict",
+      "area": "Tickets and scheduling",
+      "claim": "A ticket body that does not follow the form unambiguously is refused, not guessed",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "ticket: the form is read strictly; ambiguity is refused, not guessed"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a ticket whose form is ambiguous is not dispatched"
+        },
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "ticket: list markers of every common style are read; paths that climb or repeat a separator are refused"
+        }
+      ]
+    },
+    {
+      "id": "ticket-trusted-author",
+      "area": "Tickets and scheduling",
+      "claim": "Only issues labelled ready and written by someone the repository already trusts, or by the factory's own App, become tickets",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: tickets are open issues with the label, written by a trusted author; pull requests are ignored"
+        }
+      ]
+    },
+    {
+      "id": "done-means-done",
+      "area": "Tickets and scheduling",
+      "claim": "A change whose acceptance criteria are not all evidenced by the reviewer is sent back, not accepted",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "ticket: done means done; unmet criteria send the same ticket back to rework"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an acceptance criterion without evidence is not done"
+        }
+      ]
+    },
+    {
+      "id": "frozen-milestone",
+      "area": "Tickets and scheduling",
+      "claim": "A frozen milestone defers every ticket that does not block one of its exit criteria",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "ticket: a frozen milestone only admits tickets that block an exit criterion"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: a frozen milestone defers every ticket that does not block one of its exit criteria"
+        }
+      ]
+    },
+    {
+      "id": "no-overlap",
+      "area": "Tickets and scheduling",
+      "claim": "Two tickets whose likely files may overlap never run at the same time, including while one waits in the queue",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "scheduler: tickets whose likely files may overlap never run together"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: non-overlapping tickets run, overlapping ones wait, approved changes enter the queue"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: a change stops waiting for approval when the owner sends its ticket back to work"
+        }
+      ]
+    },
+    {
+      "id": "debt-capacity",
+      "area": "Tickets and scheduling",
+      "claim": "One debt ticket is scheduled for every four feature tickets",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "scheduler: capacity is bounded and one debt ticket is owed per four feature tickets"
+        },
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "scheduler: a debt ticket that can run is not passed over because another one is blocked"
+        }
+      ]
+    },
+    {
+      "id": "rework-cap",
+      "area": "Tickets and scheduling",
+      "claim": "A ticket sent back twice, by the pipeline, the queue or an interruption, goes to the owner instead of looping, and gets a fresh allowance when the owner restarts it",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: a rerouted ticket keeps its number, gets its risk label, and is capped until the owner restarts it"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a failing change is isolated and sent back to rework; the others land"
+        }
+      ]
+    },
+    {
+      "id": "split-not-trim",
+      "area": "Tickets and scheduling",
+      "claim": "An oversized change is split into valid smaller tickets, which wait for a person before they are worked",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a change that outgrows its ticket is split into smaller valid tickets, never trimmed"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: a split closes the original and creates tickets that parse like any other"
+        }
+      ]
+    },
+    {
+      "id": "no-stranded-ticket",
+      "area": "Tickets and scheduling",
+      "claim": "A ticket found in progress with nobody working on it is restarted at the next tick, a bounded number of times",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: a ticket left in progress with nobody working on it starts again, a bounded number of times"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: a failure while recording an outcome never leaves a ticket in progress"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: an unexpected pipeline error stops that ticket only and is recorded"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: every run of a ticket has its own step identifiers"
+        }
+      ]
+    },
+    {
+      "id": "net-progress-alert",
+      "area": "Tickets and scheduling",
+      "claim": "The owner is alerted when a milestone closes no more tickets than it creates in a week",
+      "status": "PLANNED",
+      "next": "The computation exists and is tested; schedule the weekly job and the notification."
+    },
+    {
+      "id": "risk-deterministic",
+      "area": "Risk and gates",
+      "claim": "The risk level is computed from the paths a change touches, without any model",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "risk: an ordinary change is LOW"
+        },
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "risk: a core module, an existing test or a dependency request is HIGH"
+        },
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "risk: a reserved path is CRITICAL, including by rename and for the factory configuration"
+        }
+      ]
+    },
+    {
+      "id": "risk-fail-closed",
+      "area": "Risk and gates",
+      "claim": "A change that cannot be parsed with certainty is treated as CRITICAL and refused by the patch gate",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "risk: fails closed on a path it cannot parse"
+        },
+        {
+          "file": "test/domain/diff-and-policy.test.js",
+          "test": "diff: anything git would read differently from this parser is refused"
+        }
+      ]
+    },
+    {
+      "id": "gate-sees-what-git-applies",
+      "area": "Risk and gates",
+      "claim": "The gates judge what git reports the patch does, not what the patch text claims",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: the gates see what git applies, whatever the patch text claims"
+        },
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: a symbolic link already on the trunk cannot be retargeted by a patch without a mode line"
+        },
+        {
+          "file": "test/domain/diff-and-policy.test.js",
+          "test": "diff: reconciling with what git reports fails closed on any disagreement"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a patch that does not apply, or that says one thing and does another, is refused"
+        },
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: file names are data, never patterns: spaces, brackets and pathspec magic change nothing"
+        }
+      ]
+    },
+    {
+      "id": "diff-not-forgeable",
+      "area": "Risk and gates",
+      "claim": "File content that imitates a diff header cannot hide or forge a changed file",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/diff-and-policy.test.js",
+          "test": "diff: file content that imitates a diff header cannot forge a file entry"
+        }
+      ]
+    },
+    {
+      "id": "patch-gate",
+      "area": "Risk and gates",
+      "claim": "Symlinks, submodules, binaries, mode changes, path escapes and changes over 500 lines, hidden scenarios included, are refused",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/diff-and-policy.test.js",
+          "test": "patch policy: rejects structural tricks, queue-owned files and holdout edits"
+        },
+        {
+          "file": "test/domain/diff-and-policy.test.js",
+          "test": "patch policy: a change above 500 lines or an empty patch is rejected"
+        },
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: symlinks and nested repositories planted by a step are caught by the patch gate"
+        },
+        {
+          "file": "test/domain/diff-and-policy.test.js",
+          "test": "patch policy: lines that ship in the same change count towards its size"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: the size of a change counts its hidden scenarios"
+        }
+      ]
+    },
+    {
+      "id": "queue-owned-files",
+      "area": "Risk and gates",
+      "claim": "Agents cannot edit lock files and other queue-owned files",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a patch touching a queue-owned file is refused before anything is published"
+        }
+      ]
+    },
+    {
+      "id": "queue-regenerates",
+      "area": "Risk and gates",
+      "claim": "The merge queue regenerates queue-owned files in each candidate",
+      "status": "PLANNED",
+      "next": "Add a regenerate command to the candidate build and prove it on a lock file."
+    },
+    {
+      "id": "gates-by-level",
+      "area": "Risk and gates",
+      "claim": "Review gates grow with the risk level; the second review of a CRITICAL change comes from a family that wrote neither the implementation nor the first review when such a family exists; a change riskier than its ticket was routed for is sent back",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "autonomy: gates grow with the risk level"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an injected instruction that reaches a reserved path makes the change CRITICAL"
+        }
+      ]
+    },
+    {
+      "id": "autonomy-tiers",
+      "area": "Risk and gates",
+      "claim": "Each autonomy tier lets exactly one more risk level merge without a human",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "autonomy: each tier unlocks exactly one more risk level"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: at tier 0 every gate still runs but the owner presses the button"
+        }
+      ]
+    },
+    {
+      "id": "owner-approval",
+      "area": "Risk and gates",
+      "claim": "Below the required tier, a change that passed every gate enters the queue when a person approves the reviewed commit; an approval given earlier, or on another commit, is refused and removed",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: at tier 0 a change that passed every gate enters the queue when a person approves that commit"
+        },
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: an approval is a label on a change request, reported with the commit it was given on, and can be withdrawn"
+        }
+      ]
+    },
+    {
+      "id": "autonomy-promotion",
+      "area": "Risk and gates",
+      "claim": "Tier promotion is decided automatically from measured values",
+      "status": "PLANNED",
+      "next": "The comparison with thresholds exists and is tested; define the thresholds, collect four weeks of measurements, and wire the check."
+    },
+    {
+      "id": "independent-review",
+      "area": "Independence and anti-cheating",
+      "claim": "Nobody approves their own work: reviewers and the refuter never belong to a family that wrote the implementation and, whenever the routes allow it, not to the family that wrote the scenarios; the ledger records when they do",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "routing: nobody approves their own work; the reviewer comes from another family"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: with a single model family nothing can be approved"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a confirmed blocking finding costs one fix round; refuted and minor findings do not block"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: the same failure three times stops the author and hands the ticket to another family"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: whoever wrote the scenarios does not review them when a third family exists"
+        },
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: a job is only launched on the harness family it was routed to"
+        }
+      ]
+    },
+    {
+      "id": "holdout-hidden",
+      "area": "Independence and anti-cheating",
+      "claim": "The implementing agent never sees the hidden scenarios; reviewers receive them with the change",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: the implementer never sees the holdout scenarios, reviewers do"
+        },
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: a step workspace has no repository metadata and no hidden path"
+        },
+        {
+          "file": "test/domain/diff-and-policy.test.js",
+          "test": "patch policy: holdout scenarios are writable by the specify step only"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: what the scenarios assume about the interface is passed to the implementer, the scenarios are not"
+        }
+      ]
+    },
+    {
+      "id": "holdout-add-only",
+      "area": "Independence and anti-cheating",
+      "claim": "The specify step can only add scenarios; without it nothing is implemented",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: the specify step may only add scenarios; it cannot edit or remove existing ones"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: without a route for hidden scenarios nothing is implemented"
+        }
+      ]
+    },
+    {
+      "id": "test-protection",
+      "area": "Independence and anti-cheating",
+      "claim": "Editing or removing an existing test raises the change to HIGH and triggers a dedicated review, with or without a detector signal",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "test guard: detects a deleted test, removed assertions and skipped tests"
+        },
+        {
+          "file": "test/domain/risk-and-tests.test.js",
+          "test": "test guard: detects a relaxed threshold, a replaced snapshot and a coverage drop"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an author who edits an existing test is caught and rerouted as HIGH"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: swapping a real assertion for an empty one, line for line, still triggers the test guard review"
+        }
+      ]
+    },
+    {
+      "id": "refutation",
+      "area": "Independence and anti-cheating",
+      "claim": "A finding is dropped only by an explicit refutation from a family that did not write the implementation, never by a later review of the same patch; one that comes back after it was refuted goes to the arbiter; minor findings are recorded as debt and never become tickets",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a confirmed blocking finding costs one fix round; refuted and minor findings do not block"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a refutation that is missing, late, partial or misspelt stops the ticket; it never clears a finding"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "findings: a refutation report needs one exact verdict per finding"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a finding that comes back after it was refuted is never dropped; the arbiter decides"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "findings: two findings that differ only by numbers each get their own identity and verdict"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: what was confirmed on a patch still stands when the same patch is handed in again"
+        }
+      ]
+    },
+    {
+      "id": "failed-step-proves-nothing",
+      "area": "Independence and anti-cheating",
+      "claim": "A step that crashed, timed out or returned a malformed report never counts as approval",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a step that crashed or timed out proves nothing"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a malformed review report stops the ticket instead of counting as approval"
+        },
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: timeouts, crashes and malformed reports are reported, never trusted"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an arbiter that crashed proposes nothing, and it is told the limits it must respect"
+        }
+      ]
+    },
+    {
+      "id": "conflict-stops",
+      "area": "Independence and anti-cheating",
+      "claim": "An author that reports a conflict between the ticket and the rules stops the ticket",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an author who reports a conflict between the ticket and the rules is not asked to resolve it alone"
+        }
+      ]
+    },
+    {
+      "id": "reviewer-read-only",
+      "area": "Independence and anti-cheating",
+      "claim": "A reviewing step cannot modify the change it reviews",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: a reviewing step reads the change, cannot write it, and has no proxy"
+        },
+        {
+          "file": "integration/docker.test.js",
+          "test": "docker: a read-only workspace cannot be modified by a reviewing step"
+        }
+      ]
+    },
+    {
+      "id": "correction-round",
+      "area": "Independence and anti-cheating",
+      "claim": "A correction round starts from the last attempt that passed the patch gate, and its patch stays relative to the trunk",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: a correction round starts from the previous attempt, and its patch is still relative to the trunk"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a confirmed blocking finding costs one fix round; refuted and minor findings do not block"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a patch the gate refused is not the base of the next attempt"
+        }
+      ]
+    },
+    {
+      "id": "route-grades",
+      "area": "Independence and anti-cheating",
+      "claim": "A route with grade C only runs on the reference set, never on real tickets",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "routing: a grade C route only runs on the reference set"
+        }
+      ]
+    },
+    {
+      "id": "reference-set",
+      "area": "Independence and anti-cheating",
+      "claim": "Routes earn their grade by replaying known tickets and four trap cases",
+      "status": "PLANNED",
+      "next": "The scoring exists and is tested; build the four trap fixtures and the replay command."
+    },
+    {
+      "id": "mutation-tests",
+      "area": "Independence and anti-cheating",
+      "claim": "Mutation tests run on changed core files in the merge queue",
+      "status": "PLANNED",
+      "next": "Add a mutation command to the configuration and run it on candidates that touch core modules."
+    },
+    {
+      "id": "scheduled-audits",
+      "area": "Independence and anti-cheating",
+      "claim": "Weekly and monthly audits of merged code run on a schedule within a written token ceiling",
+      "status": "PLANNED",
+      "next": "The audit prompt exists; add the schedule and route its findings through refutation."
+    },
+    {
+      "id": "recurrence-to-rule",
+      "area": "Independence and anti-cheating",
+      "claim": "A finding class seen three times is turned into a rule or a lint",
+      "status": "PLANNED",
+      "next": "The detection exists and is tested; add the step that opens the rule ticket."
+    },
+    {
+      "id": "external-tool-adapter",
+      "area": "Independence and anti-cheating",
+      "claim": "An external review tool can be configured for HIGH and CRITICAL changes",
+      "status": "PLANNED",
+      "next": "The pipeline accepts one and budgets a single pass (tested); add the configuration key and a first adapter."
+    },
+    {
+      "id": "reader-step",
+      "area": "Independence and anti-cheating",
+      "claim": "Untrusted external content is read by a separate step with no repository access",
+      "status": "PLANNED",
+      "next": "The role, its network policy and its prompt exist; add the read step to the pipeline and give it an empty workspace."
+    },
+    {
+      "id": "loop-triggers",
+      "area": "Loops and budget",
+      "claim": "Five deterministic triggers stop a ticket that is going in circles, and each of them fires in the pipeline",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "loop detection: each of the five deterministic triggers fires"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: the same failure three times stops the author and hands the ticket to another family"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an author who hands in the same patch again has changed nothing"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: the size of a change counts its hidden scenarios"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a finding that comes back after it was refuted is never dropped; the arbiter decides"
+        }
+      ]
+    },
+    {
+      "id": "one-escalation",
+      "area": "Loops and budget",
+      "claim": "A ticket is escalated once; the second time the owner decides",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "arbiter: three outcomes, one escalation per ticket, then the owner decides"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a ticket is escalated once; the second time the owner decides"
+        }
+      ]
+    },
+    {
+      "id": "halt",
+      "area": "Loops and budget",
+      "claim": "On a halt signal no step starts, nothing more is published and the queue applies no further decision; a stopped ticket, even one whose step was killed, resumes later without using its allowance",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a halt stops a ticket before its next step and before anything is published"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: while the factory is halted, results are read but nothing lands and nobody is evicted"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: a ticket stopped by a halt goes back to the pile without using its allowance"
+        }
+      ]
+    },
+    {
+      "id": "budget-per-ticket",
+      "area": "Loops and budget",
+      "claim": "Each ticket has a budget derived from its points, and uncalibrated ceilings stay UNKNOWN",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "budget: ceilings scale with points and uncalibrated ones stay UNKNOWN"
+        }
+      ]
+    },
+    {
+      "id": "cost-never-estimated",
+      "area": "Loops and budget",
+      "claim": "A cost no harness reported is recorded as UNKNOWN, never estimated",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "cost: a cost no harness reported stays UNKNOWN"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: token cost is summed when reported and UNKNOWN as soon as one step hides it"
+        }
+      ]
+    },
+    {
+      "id": "external-tool-budget",
+      "area": "Loops and budget",
+      "claim": "An external review, when one is wired in, runs at most once per ticket, on a HIGH or CRITICAL commit the model reviews let through; a commit it did not examine goes to the owner and is never recorded as examined",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: an external review tool, when configured, runs once on HIGH changes only"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: the external tool examines the commit the reviews let through; when its budget is spent the owner decides"
+        }
+      ]
+    },
+    {
+      "id": "budget-reports",
+      "area": "Loops and budget",
+      "claim": "Daily and weekly budget reports compare cost per point over time and flag changes near their ceiling",
+      "status": "PLANNED",
+      "next": "The computations exist and are tested; schedule the reports, add the daily ceiling, calibrate after four weeks."
+    },
+    {
+      "id": "queue-future-state",
+      "area": "Merge queue",
+      "claim": "Every change is tested on the future state of the trunk, and the trunk only fast-forwards to a commit whose checks passed",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "merge queue: later batches are tested on the future trunk and stay valid when the head lands"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: the trunk only fast-forwards to candidates whose checks passed"
+        },
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: publish, build a candidate on the future trunk, and fast-forward to it"
+        }
+      ]
+    },
+    {
+      "id": "queue-reviewed-commit",
+      "area": "Merge queue",
+      "claim": "The queue merges the commit that passed the gates, not whatever its branch points to later",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: a candidate is built from the reviewed commit, not from what the branch points to later"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: non-overlapping tickets run, overlapping ones wait, approved changes enter the queue"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue: admitting the same commit again changes nothing; another commit under an identifier already in the queue is refused"
+        }
+      ]
+    },
+    {
+      "id": "queue-batches-bisection",
+      "area": "Merge queue",
+      "claim": "Changes are tested in batches; a failed batch is bisected and only the culprit is evicted",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "merge queue: a failed batch is bisected, good halves land, the culprit alone is evicted"
+        },
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "merge queue: the last change of a failed batch is evicted without a wasted run"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a failing change is isolated and sent back to rework; the others land"
+        }
+      ]
+    },
+    {
+      "id": "queue-flaky",
+      "area": "Merge queue",
+      "claim": "A flaky failure is retried, recorded, and does not evict a change",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "merge queue: a flaky failure is retried, reported, and does not evict"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a flaky candidate is rebuilt, retested and recorded"
+        }
+      ]
+    },
+    {
+      "id": "queue-converges",
+      "area": "Merge queue",
+      "claim": "Whatever the order of admissions and results, the queue lands every good change and evicts every bad one",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: random admissions, failures, timings, faults on any call, lost ticks and outside commits always converge on the right trunk"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: changes admitted while candidates are under test never wedge the queue"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a head that fails while its speculative child passes, in the same tick, stays consistent"
+        }
+      ]
+    },
+    {
+      "id": "queue-external-moves",
+      "area": "Merge queue",
+      "claim": "When the trunk moves outside the queue, candidates are rebuilt on the new head and nothing a person merged is lost",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: when the trunk moves outside the queue, candidates are rebuilt on the new head"
+        }
+      ]
+    },
+    {
+      "id": "queue-replay",
+      "area": "Merge queue",
+      "claim": "A queue tick interrupted anywhere is replayed with every change landed, evicted and recorded exactly once, whatever was admitted or pushed in between",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a tick interrupted after the fast-forward is replayed without a second landing"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a tick interrupted after several landings, or after an eviction, is replayed with each effect recorded once"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: random admissions, failures, timings, faults on any call, lost ticks and outside commits always converge on the right trunk"
+        },
+        {
+          "file": "test/adapters/files-and-registry.test.js",
+          "test": "files: an operation recorded once stays recorded once when it is replayed, also after a restart"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a landing that was interrupted is acknowledged even when the plan changed before the replay"
+        },
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "merge queue: changes found on the trunk leave the queue, bisection keeps its conclusion, and the rest is planned afresh"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: records are delivered after the state is saved, and delivering them twice leaves one trace"
+        }
+      ]
+    },
+    {
+      "id": "queue-conflicts",
+      "area": "Merge queue",
+      "claim": "A change that conflicts with the future trunk is evicted before any check runs",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a change that conflicts with the future trunk is evicted before any check runs"
+        },
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: a conflicting branch is reported instead of producing a candidate"
+        }
+      ]
+    },
+    {
+      "id": "queue-live",
+      "area": "Merge queue",
+      "claim": "The merge queue lands changes on a real forge",
+      "status": "TO_PROVE",
+      "next": "Set forge.queueActor, apply the ruleset, and run the control service against a sandbox repository."
+    },
+    {
+      "id": "queue-scopes",
+      "area": "Merge queue",
+      "claim": "Changes in independent scopes are tested in parallel lanes",
+      "status": "PLANNED",
+      "next": "Declare scopes in the configuration and partition the queue by scope; one serial lane is always correct meanwhile."
+    },
+    {
+      "id": "sandbox-spec",
+      "area": "Sandbox",
+      "claim": "Every step is launched as a fresh container: pinned image, non-root, read-only, no capability, bounded, no daemon socket",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "sandbox: every container is disposable, unprivileged, read-only and bounded"
+        },
+        {
+          "file": "test/domain/security.test.js",
+          "test": "sandbox: refuses unpinned images, root, open environments, daemon sockets and host networks"
+        }
+      ]
+    },
+    {
+      "id": "sandbox-real-runtime",
+      "area": "Sandbox",
+      "claim": "The hardening holds on a real container runtime (checked in the CI sandbox job)",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "integration/docker.test.js",
+          "test": "docker: the step runs as an unprivileged user with no capability, usable or obtainable"
+        },
+        {
+          "file": "integration/docker.test.js",
+          "test": "docker: the root filesystem is mounted read-only; only the workspace, /out and /tmp accept writes"
+        },
+        {
+          "file": "integration/docker.test.js",
+          "test": "docker: without a network the step only has a loopback interface"
+        },
+        {
+          "file": "integration/docker.test.js",
+          "test": "docker: the environment is the closed list and nothing from the host"
+        },
+        {
+          "file": "integration/docker.test.js",
+          "test": "docker: a step that exceeds its time limit is killed and its container removed"
+        }
+      ]
+    },
+    {
+      "id": "secrets-off-command-line",
+      "area": "Sandbox",
+      "claim": "Secret values never appear on a command line",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "sandbox: secret values never appear on the command line"
+        },
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: the sandbox only receives a step token, valid for the step and revoked after it"
+        }
+      ]
+    },
+    {
+      "id": "workspace-lifecycle",
+      "area": "Sandbox",
+      "claim": "A step gets a fresh workspace without repository metadata; whatever happens to the step, the workspace is removed and its token revoked",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: an author step gets a hidden-free workspace, a prompt, and returns patch, report and tokens"
+        },
+        {
+          "file": "test/adapters/git.test.js",
+          "test": "git: attributes in the tree cannot hide files from a workspace"
+        },
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: whatever happens to a step, its workspace is removed and its token revoked"
+        }
+      ]
+    },
+    {
+      "id": "untrusted-output",
+      "area": "Sandbox",
+      "claim": "What a step leaves behind is read without following links, within a size limit",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: a report that is a link to a host file, or a job with a crafted identifier, is not followed"
+        },
+        {
+          "file": "test/adapters/files-and-registry.test.js",
+          "test": "files: a file from a less trusted party is read without following links and within a size limit"
+        }
+      ]
+    },
+    {
+      "id": "sandbox-timeout-and-leftovers",
+      "area": "Sandbox",
+      "claim": "A step past its time limit is killed; a runner that cannot stop a sandbox stops serving, and sandboxes left by a runner that died are removed when it starts",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "docker launcher: a step that passes its time limit is killed, and sandboxes left by a dead runner are swept"
+        },
+        {
+          "file": "integration/docker.test.js",
+          "test": "docker: a step that exceeds its time limit is killed and its container removed"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "spool: a runner that lost control of a sandbox answers the job, then stops serving"
+        }
+      ]
+    },
+    {
+      "id": "sandbox-isolation-between-steps",
+      "area": "Sandbox",
+      "claim": "Concurrent sandboxes cannot reach each other, and each has a disk quota",
+      "status": "PLANNED",
+      "next": "Give each run its own internal network and a size-limited filesystem."
+    },
+    {
+      "id": "sandbox-stronger-isolation",
+      "area": "Sandbox",
+      "claim": "Steps run under a rootless daemon or in a micro-VM",
+      "status": "PLANNED",
+      "next": "Add a launcher behind the same interface; the factory only depends on the launch contract."
+    },
+    {
+      "id": "egress-allowlist",
+      "area": "Network and secrets",
+      "claim": "Through the proxy, a step reaches only the exact hosts listed for its role, on port 443, and every refusal is recorded",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "egress: only exact listed hosts on port 443, per role"
+        },
+        {
+          "file": "test/adapters/egress.test.js",
+          "test": "egress: unlisted hosts, other ports, missing, expired or revoked grants are refused and reported"
+        }
+      ]
+    },
+    {
+      "id": "egress-private-addresses",
+      "area": "Network and secrets",
+      "claim": "A listed host that resolves to anything but a public unicast address is refused",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/egress.test.js",
+          "test": "egress: a listed host that resolves to a private address is refused"
+        },
+        {
+          "file": "test/domain/security.test.js",
+          "test": "egress: private, loopback, link-local and metadata addresses are recognised"
+        },
+        {
+          "file": "test/domain/security.test.js",
+          "test": "egress: only global unicast addresses are public, and an embedded IPv4 address is judged as itself"
+        }
+      ]
+    },
+    {
+      "id": "model-key-outside-sandbox",
+      "area": "Network and secrets",
+      "claim": "Model provider keys never enter a sandbox: the gateway adds them, for POST requests to exact listed API paths only",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/egress.test.js",
+          "test": "gateway: the provider key is added outside the sandbox; the sandbox only holds the step token"
+        },
+        {
+          "file": "test/adapters/egress.test.js",
+          "test": "gateway: a grant works for its own provider only, and never without a grant"
+        },
+        {
+          "file": "test/adapters/egress.test.js",
+          "test": "gateway: only POST is forwarded"
+        }
+      ]
+    },
+    {
+      "id": "step-tokens",
+      "area": "Network and secrets",
+      "claim": "Each step gets its own short-lived token, stored hashed and revoked when the step ends; a tunnel is closed when its grant expires",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/egress.test.js",
+          "test": "egress: a grant stores only a hash of the step token"
+        },
+        {
+          "file": "test/adapters/sandbox-runner.test.js",
+          "test": "runner: the sandbox only receives a step token, valid for the step and revoked after it"
+        },
+        {
+          "file": "test/adapters/egress.test.js",
+          "test": "egress: a tunnel carries the bytes sent with the request, and never outlives or outruns its grant"
+        }
+      ]
+    },
+    {
+      "id": "dependency-gate",
+      "area": "Network and secrets",
+      "claim": "A dependency request is checked against the registry: young, unlicensed or scripted packages are refused, and a manifest edited directly is HIGH",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "dependency gate: refuses unknown, too young, unlicensed, deprecated or scripted packages"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: a dependency is requested, never installed; a young package is refused"
+        },
+        {
+          "file": "test/adapters/files-and-registry.test.js",
+          "test": "npm registry: metadata for the dependency gate comes from the package document"
+        }
+      ]
+    },
+    {
+      "id": "dependency-install",
+      "area": "Network and secrets",
+      "claim": "An approved dependency is installed by the merge queue",
+      "status": "PLANNED",
+      "next": "Until then an approved request stops with the owner; add the regeneration of manifests and lock files to the candidate build."
+    },
+    {
+      "id": "zone-boundary",
+      "area": "Network and secrets",
+      "claim": "Results crossing from the execution zone are sanitised, and an answer to an earlier job is never taken for a new one",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "spool: a job crosses the zone boundary as a file and its answer is sanitised"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "spool: an answer to an earlier job with the same identifier is never taken for the new one"
+        }
+      ]
+    },
+    {
+      "id": "no-secret-in-repository",
+      "area": "Network and secrets",
+      "claim": "A committed secret fails the verify command",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "hygiene: committed secrets are reported without echoing them"
+        },
+        {
+          "file": "test/cli.test.js",
+          "test": "cli: check reports non-English text, secrets, outward imports and shipped provisional data"
+        }
+      ]
+    },
+    {
+      "id": "gateway-live",
+      "area": "Network and secrets",
+      "claim": "The model gateway works with real providers and harnesses",
+      "status": "TO_PROVE",
+      "next": "Run one step per configured harness through the gateway and confirm the provider accepts the forwarded call."
+    },
+    {
+      "id": "services-on-a-host",
+      "area": "Network and secrets",
+      "claim": "The three services run from deploy/compose.yaml",
+      "status": "TO_PROVE",
+      "next": "Follow docs/operations.md on a host and run a ticket end to end. On one host the separation is between processes only."
+    },
+    {
+      "id": "two-machines",
+      "area": "Network and secrets",
+      "claim": "The control zone and the execution zone run on two machines",
+      "status": "PLANNED",
+      "next": "Carry the job spool over a private network, with one directory per direction; the file protocol is already the only link for work."
+    },
+    {
+      "id": "revocation-drill",
+      "area": "Network and secrets",
+      "claim": "Model keys and forge credentials can be revoked and rotated within minutes",
+      "status": "TO_PROVE",
+      "next": "Run the drill in docs/security.md with a stopwatch, each quarter, and record the time."
+    },
+    {
+      "id": "ledger",
+      "area": "Traceability and measurement",
+      "claim": "Every decision is appended to a hash-chained ledger: an entry that was edited, reordered or removed from the middle is detected; a cut tail is detected only once the head is anchored elsewhere",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "ledger: entries are chained and any edit, removal or reordering is detected"
+        },
+        {
+          "file": "test/domain/security.test.js",
+          "test": "ledger: what is hashed is what is read back, and the head can be anchored elsewhere"
+        },
+        {
+          "file": "test/adapters/files-and-registry.test.js",
+          "test": "files: the ledger survives restarts and concurrent appends as one valid chain"
+        },
+        {
+          "file": "test/cli.test.js",
+          "test": "cli: ledger verify detects tampering"
+        },
+        {
+          "file": "test/adapters/files-and-registry.test.js",
+          "test": "files: a record cut short by a crash is not an entry, and the next append starts on a clean line"
+        }
+      ]
+    },
+    {
+      "id": "ledger-anchor",
+      "area": "Traceability and measurement",
+      "claim": "The head of the ledger is copied outside the control zone, so that a cut or rebuilt file is detected",
+      "status": "PLANNED",
+      "next": "Write the head hash into each merge commit or to an external store."
+    },
+    {
+      "id": "concurrent-state",
+      "area": "Traceability and measurement",
+      "claim": "Within a service, concurrent updates of the queue state never lose a write",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/files-and-registry.test.js",
+          "test": "files: the store returns its fallback until something is written"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "dispatcher: non-overlapping tickets run, overlapping ones wait, approved changes enter the queue"
+        }
+      ]
+    },
+    {
+      "id": "dora-computation",
+      "area": "Traceability and measurement",
+      "claim": "The five DORA metrics are computed without a model from a delivery log, sliced by agent and risk level",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "DORA: the five metrics are computed from the delivery log"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "DORA: recovery is measured to the rollback of that deployment, not to the next unrelated success"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "DORA: metrics are sliced by agent and by risk level without cross-attribution"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "DORA: without deployments nothing is invented"
+        }
+      ]
+    },
+    {
+      "id": "delivery-log",
+      "area": "Traceability and measurement",
+      "claim": "A delivery step writes one line per deployment and promotes by image digest",
+      "status": "PLANNED",
+      "next": "Define the deliver port, its log line and a first adapter; until then the delivery log comes from the deployment system."
+    },
+    {
+      "id": "debt-register-computation",
+      "area": "Traceability and measurement",
+      "claim": "A debt register keeps each measure with its trend and proposes at most three tickets",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "debt: the register keeps measure and trend, and proposes at most three tickets"
+        }
+      ]
+    },
+    {
+      "id": "debt-loop",
+      "area": "Traceability and measurement",
+      "claim": "A weekly model-free job measures debt, fills the register, and opens the proposed tickets",
+      "status": "PLANNED",
+      "next": "Add configurable probe commands and the weekly schedule; layer violations and provisional items are already measured."
+    },
+    {
+      "id": "proof-registry",
+      "area": "Traceability and measurement",
+      "claim": "Every claim on this page is checked: a PROVEN claim names, by its full title, a test that exists",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "proofs: PROVEN needs evidence that exists; anything else needs a next step"
+        },
+        {
+          "file": "test/cli.test.js",
+          "test": "this repository: its own configuration is valid, honest about readiness, and matches the template"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "proofs: evidence names a whole test title; a malformed registry is reported, never thrown on"
+        }
+      ]
+    },
+    {
+      "id": "english-only",
+      "area": "Repository hygiene",
+      "claim": "Text with a letter outside ASCII fails the verify command (a heuristic for English-only content)",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "hygiene: non-English prose is reported, symbols are not"
+        },
+        {
+          "file": "test/cli.test.js",
+          "test": "cli: check reports non-English text, secrets, outward imports and shipped provisional data"
+        },
+        {
+          "file": "test/domain/security.test.js",
+          "test": "hygiene: a letter of any other script is reported, whatever its alphabet"
+        }
+      ]
+    },
+    {
+      "id": "no-provisional-in-production",
+      "area": "Repository hygiene",
+      "claim": "Provisional information is listed for the owner and fails the check in production paths",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "hygiene: provisional information is listed and blocks production paths only"
+        },
+        {
+          "file": "test/cli.test.js",
+          "test": "cli: check reports non-English text, secrets, outward imports and shipped provisional data"
+        }
+      ]
+    },
+    {
+      "id": "layers",
+      "area": "Repository hygiene",
+      "claim": "Inner architecture layers cannot import outer ones",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/security.test.js",
+          "test": "hygiene: inner layers must not import outer layers"
+        }
+      ]
+    },
+    {
+      "id": "config-validated",
+      "area": "Forge and configuration",
+      "claim": "Unsafe, inconsistent or misspelt configuration is refused, and readiness gaps are stated plainly",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "config: unsafe or inconsistent values are refused"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "config: readiness says plainly what still blocks autonomous work"
+        },
+        {
+          "file": "test/cli.test.js",
+          "test": "cli: a template without project name is refused by doctor with the reasons"
+        },
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "config: sections must be objects, misspelt keys are errors, and hostile patterns are refused"
+        }
+      ]
+    },
+    {
+      "id": "template-init",
+      "area": "Forge and configuration",
+      "claim": "A repository starts from the template with one command, without overwriting anything",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/cli.test.js",
+          "test": "cli: init starts a repository from the template and never overwrites"
+        }
+      ]
+    },
+    {
+      "id": "settings-as-code",
+      "area": "Forge and configuration",
+      "claim": "Labels, repository options and the trunk ruleset are planned from code; a loosened ruleset is detected",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/domain/measure.test.js",
+          "test": "settings: the plan lists only what differs from the desired state"
+        },
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: settings are read, diffed and applied without manual steps"
+        },
+        {
+          "file": "test/cli.test.js",
+          "test": "cli: settings prints the desired state offline, plans and applies with a token"
+        }
+      ]
+    },
+    {
+      "id": "settings-live",
+      "area": "Forge and configuration",
+      "claim": "Settings as code are applied on a real repository by a credential with administration rights",
+      "status": "TO_PROVE",
+      "next": "Run pheromill settings apply with an administrator token and compare the result with the plan."
+    },
+    {
+      "id": "github-adapter",
+      "area": "Forge and configuration",
+      "claim": "The GitHub adapter sends the expected requests for tickets, change requests, approvals and checks, reads lists to their last page, bounds every request in time and never replaces a label set as a whole (against a double)",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: a change request targets the trunk, links its ticket, carries its risk label, and is reused"
+        },
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: checks pass only when every required check completed successfully"
+        },
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: errors never contain the token"
+        },
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: lists are read to the last page"
+        },
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github: a state change swaps one label, explains itself, and closes only when done"
+        }
+      ]
+    },
+    {
+      "id": "github-app-tokens",
+      "area": "Forge and configuration",
+      "claim": "GitHub App tokens are requested signed, limited to one repository, and renewed before expiry",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "file": "test/adapters/github.test.js",
+          "test": "github app: tokens are signed requests, scoped to one repository, cached until near expiry"
+        }
+      ]
+    },
+    {
+      "id": "github-live",
+      "area": "Forge and configuration",
+      "claim": "The GitHub adapter works against the live API",
+      "status": "TO_PROVE",
+      "next": "Run the control service against a sandbox repository; the request shapes are proven against a double only."
+    },
+    {
+      "id": "other-forges",
+      "area": "Forge and configuration",
+      "claim": "Another forge is supported",
+      "status": "PLANNED",
+      "next": "Write an adapter for the Forge and Checks ports and move the ruleset shape behind it; git operations are already forge-independent."
+    },
+    {
+      "id": "harness-claude-code",
+      "area": "Forge and configuration",
+      "claim": "The Claude Code harness example runs a step end to end",
+      "status": "TO_PROVE",
+      "next": "Build the example image, configure the route, and run a ticket through it."
+    },
+    {
+      "id": "second-family",
+      "area": "Forge and configuration",
+      "claim": "A second model family is configured, so that independent review is possible",
+      "status": "TO_PROVE",
+      "next": "Add a harness of another family; any command-line harness works through the same configuration."
+    },
+    {
+      "id": "inception",
+      "area": "Product creation",
+      "claim": "From a short prompt and a few questions: audience, brand book, logo, design system, backlog, stack, monorepo",
+      "status": "PLANNED",
+      "next": "Define the inception workflow as steps with schemas and decision records, each reversible by a human."
+    },
+    {
+      "id": "product-gates",
+      "area": "Product creation",
+      "claim": "Accessibility, SEO, mobile layout and performance budgets are enforced in each product's verify command",
+      "status": "PLANNED",
+      "next": "The rules are in the template AGENTS.md; add reference gate scripts to the template."
+    },
+    {
+      "id": "product-monitoring",
+      "area": "Product creation",
+      "claim": "Customer journey, conversion, errors and availability are monitored for each product",
+      "status": "PLANNED",
+      "next": "Add the monitoring contract to the template and a check that every user-facing change is measurable."
+    }
+  ]
+}

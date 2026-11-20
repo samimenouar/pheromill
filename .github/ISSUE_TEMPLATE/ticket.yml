@@ -1,0 +1,42 @@
+name: Ticket
+description: One thing a user can see or test, sized 1 to 5 points.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A ticket is dispatched to the factory only once someone with triage rights adds the `factory:ready` label.
+        Smaller findings do not get a ticket: they go to the debt register.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What the user will see
+      description: The observable result, in plain language. Not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: One per line. Each must be checkable by a test or by looking at the product.
+      placeholder: |
+        - A reset link is emailed
+        - The link expires after one hour
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Likely files
+      description: Files or globs this ticket will probably touch, one per line. Two tickets whose likely files overlap never run at the same time.
+      placeholder: |
+        - src/auth/**
+    validations:
+      required: true
+  - type: dropdown
+    id: points
+    attributes:
+      label: Points
+      description: Effort from 1 to 5. Anything larger must be split before it is dispatched.
+      options: ["1", "2", "3", "4", "5"]
+    validations:
+      required: true

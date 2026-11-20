@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "project": {
+    "name": "",
+    "trunk": "main"
+  },
+  "forge": {
+    "kind": "github",
+    "repository": "",
+    "requiredChecks": [
+      "verify"
+    ]
+  },
+  "paths": {
+    "reserved": [
+      "pheromill.config.json",
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".github/**",
+      "deploy/**",
+      "scripts/verify.sh",
+      ".gitattributes"
+    ],
+    "core": [],
+    "tests": [
+      "test/**",
+      "tests/**",
+      "**/*.test.*",
+      "**/*.spec.*"
+    ],
+    "holdout": [
+      "holdout/**"
+    ],
+    "queueOwned": [
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock"
+    ],
+    "snapshots": [
+      "**/__snapshots__/**",
+      "**/*.snap"
+    ],
+    "thresholds": [],
+    "production": [
+      "src/**",
+      "app/**",
+      "public/**"
+    ]
+  },
+  "providers": {},
+  "harnesses": {},
+  "routing": [],
+  "egress": {},
+  "autonomy": {
+    "tier": 0,
+    "promotion": [
+      {},
+      {},
+      {}
+    ]
+  }
+}

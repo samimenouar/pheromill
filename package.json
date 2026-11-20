@@ -1,0 +1,22 @@
+{
+  "name": "pheromill",
+  "version": "0.1.0",
+  "description": "A software factory that turns tickets into proven, merged changes through deterministic gates around AI agents.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.8"
+  },
+  "bin": {
+    "pheromill": "bin/pheromill.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "verify": "node scripts/verify.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samimenouar/pheromill.git"
+  }
+}

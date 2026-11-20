@@ -70,8 +70,8 @@ test('github: a state change swaps one label, explains itself, and closes only w
   };
   const rework = forge(routes);
   await rework.instance.setTicketState('4', 'rework', 'Checks failed on the future trunk.');
-  assert.deepEqual(rework.sent(), ['GET /issues/4/labels', 'DELETE /issues/4/labels/factory%3Ain-progress', 'POST /issues/4/labels', 'POST /issues/4/comments']);
-  assert.deepEqual(rework.calls[2].body, { labels: ['factory:rework'] });
+  assert.deepEqual(rework.sent(), ['GET /issues/4/labels', 'POST /issues/4/labels', 'DELETE /issues/4/labels/factory%3Ain-progress', 'POST /issues/4/comments'], 'the new state is added before the old one is removed: interrupted in between, the ticket is never without a state');
+  assert.deepEqual(rework.calls[1].body, { labels: ['factory:rework'] });
   assert.ok(!rework.sent().some((call) => call.startsWith('PUT')), 'the label set is never replaced as a whole, so a concurrent approval or withdrawal survives');
 
   const done = forge(routes);
@@ -92,8 +92,8 @@ test('github: a change request targets the trunk, links its ticket, carries its 
   assert.equal((await instance.openChange(input)).id, '12');
   assert.deepEqual(calls[1].body, { title: 'Reset', head: 'factory/t4', base: 'main', body: 'LOW: nothing sensitive\n\nTicket: #4' });
   await instance.setLabels('12', ['risk:high']);
-  assert.deepEqual(sent().slice(-3), ['GET /issues/12/labels', 'DELETE /issues/12/labels/risk%3Alow', 'POST /issues/12/labels']);
-  assert.deepEqual(calls.at(-1).body, { labels: ['risk:high'] });
+  assert.deepEqual(sent().slice(-3), ['GET /issues/12/labels', 'POST /issues/12/labels', 'DELETE /issues/12/labels/risk%3Alow']);
+  assert.deepEqual(calls.at(-2).body, { labels: ['risk:high'] });
 
   open = [{ number: 12 }];
   const before = sent().filter((call) => call === 'POST /pulls').length;

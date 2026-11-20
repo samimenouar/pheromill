@@ -305,7 +305,7 @@
     {
       "id": "gates-by-level",
       "area": "Risk and gates",
-      "claim": "Review gates grow with the risk level, and a change riskier than its ticket was routed for is sent back",
+      "claim": "Review gates grow with the risk level; the second review of a CRITICAL change comes from a family that did not give the first one when such a family exists; a change riskier than its ticket was routed for is sent back",
       "status": "PROVEN",
       "evidence": [
         {
@@ -360,7 +360,7 @@
     {
       "id": "independent-review",
       "area": "Independence and anti-cheating",
-      "claim": "Nobody approves their own work: reviewers and the refuter never belong to a family that wrote the implementation, nor to the one that wrote the scenarios when a third family is configured",
+      "claim": "Nobody approves their own work: reviewers and the refuter never belong to a family that wrote the implementation and, whenever the routes allow it, not to the family that wrote the scenarios; the ledger records when they do",
       "status": "PROVEN",
       "evidence": [
         {
@@ -658,7 +658,7 @@
     {
       "id": "halt",
       "area": "Loops and budget",
-      "claim": "On a halt signal no step starts, nothing is published and nothing lands; a stopped ticket, even one whose step was killed, resumes later without using its allowance",
+      "claim": "On a halt signal no step starts, nothing more is published and the queue applies no further decision; a stopped ticket, even one whose step was killed, resumes later without using its allowance",
       "status": "PROVEN",
       "evidence": [
         {
@@ -759,6 +759,10 @@
         {
           "file": "test/application/dispatch.test.js",
           "test": "dispatcher: non-overlapping tickets run, overlapping ones wait, approved changes enter the queue"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue: admitting the same commit again changes nothing; another commit under the same identifier replaces what was being tested"
         }
       ]
     },
@@ -1188,7 +1192,7 @@
     {
       "id": "ledger",
       "area": "Traceability and measurement",
-      "claim": "Every decision is appended to a hash-chained ledger: an edited, removed or reordered entry is detected, and the head can be anchored elsewhere",
+      "claim": "Every decision is appended to a hash-chained ledger: an entry that was edited, reordered or removed from the middle is detected; a cut tail is detected only once the head is anchored elsewhere",
       "status": "PROVEN",
       "evidence": [
         {

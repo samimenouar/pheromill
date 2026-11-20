@@ -224,6 +224,14 @@ test('dispatcher: a failure while recording an outcome never leaves a ticket in 
   const result = await dispatchTick({ startedKinds: [], history: [] }, config, ports);
   assert.deepEqual(result.outcomes, { 1: 'needs_owner' });
   assert.match(forge.tickets.get('1').note, /disk full/);
+  assert.deepEqual(ports.ledger.ofType('ticket_outcome').map((entry) => entry.outcome), ['queued', 'needs_owner']);
+
+  const refusing = world({ implement: () => { throw new Error('sandbox host unreachable'); } }, [issue('2', ['src/app/b.js'])]);
+  const label = refusing.forge.setTicketState.bind(refusing.forge);
+  refusing.forge.setTicketState = (id, state, note) => (state === 'needs_owner' ? Promise.reject(new Error('forge unreachable')) : label(id, state, note));
+  await dispatchTick({ startedKinds: [], history: [] }, config, refusing.ports);
+  assert.deepEqual(refusing.ports.ledger.ofType('ticket_outcome'), [], 'the hand-over is recorded only once the owner really has the ticket');
+  assert.deepEqual(refusing.forge.tickets.get('2').labels, ['factory:in-progress'], 'found in progress at the next tick, it starts again within the cap');
 });
 
 test('spool: a job crosses the zone boundary as a file and its answer is sanitised', async () => {

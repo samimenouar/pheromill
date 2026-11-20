@@ -146,8 +146,11 @@ export async function dispatchTick(memory, config, ports) {
       } catch (error) {
         // Whatever failed, the ticket must not stay "in progress" with nobody working on it.
         result = { outcome: 'needs_owner' };
-        await note(ticket.id, 'needs_owner', `Pipeline error: ${error.message}`).catch(() => {});
-        await forge.setTicketState(ticket.id, 'needs_owner', `The pipeline stopped on an unexpected error: ${error.message}`).catch(() => {});
+        // Recorded only once the owner really has the ticket: otherwise it is found in progress and restarted, within the cap.
+        await forge
+          .setTicketState(ticket.id, 'needs_owner', `The pipeline stopped on an unexpected error: ${error.message}`)
+          .then(() => note(ticket.id, 'needs_owner', `Pipeline error: ${error.message}`))
+          .catch(() => {});
       }
       outcomes[ticket.id] = result.outcome;
     }),

@@ -86,8 +86,9 @@ Other limits worth stating:
   implementer's workspace excludes them and it has no route to the forge, but
   a model provider's own server-side tools (web access) are outside the
   factory's control: disable them in the harness configuration.
-- The halt switch is read before each step, before each publication and
-  before the queue lands or evicts anything. A step already running in a
+- The halt switch is read before each step, before each publication and, in
+  each queue tick, before its decisions are applied. It does not interrupt an
+  operation already under way. A step already running in a
   sandbox continues until it ends or the sandboxes are killed, and a check run
   already started on the forge finishes.
 
@@ -113,7 +114,8 @@ incident:
 ## Runbooks
 
 **Halt (red button).** Create the file `HALT` in the control state directory.
-While it exists no step starts, nothing is published and nothing lands; a
+While it exists no step starts, nothing is published and the queue applies no
+decision (a fast-forward already under way when the file appears finishes); a
 ticket that was running goes back to the pile and resumes after the file is
 removed, without using its rework allowance, also when its step was killed.
 To stop steps that are already running, kill the sandboxes on the runner host:

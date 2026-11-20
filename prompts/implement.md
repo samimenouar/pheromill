@@ -17,8 +17,9 @@ to pass is to build what the acceptance criteria describe.
    nothing else.
 2. Plan the whole change before editing. Check what else depends on the code
    you will touch.
-3. Write a failing test, then the code. Keep the whole change well under 400
-   lines: the hidden scenarios count towards the same limit.
+3. Write a failing test, then the code. Keep the whole change under
+   `limits.changedLines` lines (given in the Input): the hidden scenarios
+   already used the rest of the limit.
 4. Run the project's checks locally if the tools are available.
 5. Stop when the criteria are met. Do not refactor or improve beyond the ticket.
 

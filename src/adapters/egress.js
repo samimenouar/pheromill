@@ -90,6 +90,7 @@ export function createEgressProxy(options) {
     if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
       return refuse(403, { reason: 'private_address', host, role: grant.role, runId: grant.runId });
     }
+    if (client.destroyed) return undefined; // the step went away while the name was being resolved
     // The grant may have been revoked while the name was being resolved.
     const still = await readGrant(options.grants, proxyToken(request.headers['proxy-authorization']), clock.now());
     if (!still) return refuse(407, { reason: 'no_valid_grant', host });

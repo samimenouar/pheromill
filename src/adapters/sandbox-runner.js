@@ -18,6 +18,7 @@ const MAX_REPORT_BYTES = 1024 * 1024;
 const SAFE_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const STEP = /^[a-z][a-z_]{0,30}$/;
 const MAX_KILL_ATTEMPTS = 120;
+const KILL_COMMAND_MS = 10000;
 
 /** Remove a directory even if a step left entries the runner cannot traverse. */
 async function forceRemove(directory) {
@@ -64,17 +65,18 @@ export class DockerLauncher {
       // arrive before the container exists. One attempt at a time, and a bounded
       // number of them: a daemon that stopped answering is reported, not waited for.
       const kill = () => {
-        if (killing) return;
+        // Counted by the clock, not by answers: a kill command that hangs must not stop the count.
         if ((attempts += 1) > MAX_KILL_ATTEMPTS) {
           stop();
           reject(new Error(`Sandbox ${spec.name} could not be stopped: the container runtime does not answer.`));
           return;
         }
+        if (killing) return;
         killing = true;
         const done = () => {
           killing = false;
         };
-        spawn(this.binary, ['kill', spec.name], { stdio: 'ignore' }).on('error', done).on('close', done);
+        spawn(this.binary, ['kill', spec.name], { stdio: 'ignore', timeout: KILL_COMMAND_MS }).on('error', done).on('close', done);
       };
       const timer = setTimeout(() => {
         timedOut = true;
@@ -98,11 +100,13 @@ export class DockerLauncher {
 
   /** Remove every sandbox a previous runner process left behind. */
   sweep() {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const failed = (what, error) => reject(new Error(`Could not ${what} leftover sandboxes: ${error.message}`));
       execFile(this.binary, ['ps', '--all', '--quiet', '--filter', 'label=pheromill.sandbox=true'], (error, stdout) => {
-        const ids = error ? [] : stdout.split('\n').filter(Boolean);
-        if (ids.length === 0) resolve(0);
-        else execFile(this.binary, ['rm', '--force', ...ids], () => resolve(ids.length));
+        if (error) return failed('list', error);
+        const ids = stdout.split('\n').filter(Boolean);
+        if (ids.length === 0) return resolve(0);
+        return execFile(this.binary, ['rm', '--force', ...ids], (failure) => (failure ? failed('remove', failure) : resolve(ids.length)));
       });
     });
   }

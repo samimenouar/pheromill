@@ -212,6 +212,15 @@ PROVISIONAL(license): the license was chosen by the author of the genesis import
   attacked those fixes and found two more defects, fixed before the merge: a
   landing interrupted just before an admission could be repeated, and a
   confirmed finding vanished when the same patch was handed in again.
+- **Left open, knowingly.** Reviews were stopped after two rounds, as the
+  factory's own rule demands. Not changed: a step result the runner cannot
+  write is abandoned and the step counts as failed; the comment that
+  announces a landing or an eviction can appear twice if its delivery is
+  replayed; the identity of a finding is its text, so a reworded finding is a
+  new one; an approval is checked against the commit the change request
+  points to when it is read (the queue merges the reviewed commit either
+  way); the owner may approve a commit the external tool did not examine,
+  and is told so.
 - **Risk.** The reviewing agents were of the same model family as the author.
   Which models the automated tool runs is not something this repository can
   attest. The owner's review of the genesis change is the missing independent

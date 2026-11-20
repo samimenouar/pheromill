@@ -157,6 +157,7 @@ export function validateConfig(config) {
 
   for (const [name, entry] of Object.entries(config.providers ?? {})) {
     const provider = entry ?? {};
+    need(/^[a-z0-9-]+$/.test(name), `providers.${name}: a provider name uses lowercase letters, digits and hyphens (it is a segment of the gateway address).`);
     need(/^https:\/\/[^/]+$/.test(String(provider.baseUrl ?? '')), `providers.${name}.baseUrl must be an https origin without a path.`);
     need(typeof provider.authHeader === 'string' && provider.authHeader !== '', `providers.${name}.authHeader is required.`);
     need(/^[A-Z][A-Z0-9_]*$/.test(String(provider.keyEnv ?? '')), `providers.${name}.keyEnv must name an environment variable; the key itself never goes in this file.`);

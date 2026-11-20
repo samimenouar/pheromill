@@ -113,11 +113,12 @@ export class GitHubForge {
    */
   async swapLabels(number, shouldRemove, add) {
     const current = (await this.list(`/issues/${number}/labels`)).map((label) => label.name);
+    // Add before removing: interrupted in between, an issue has two state labels, never none.
+    const missing = add.filter((label) => !current.includes(label));
+    if (missing.length > 0) await this.api('POST', `/issues/${number}/labels`, { labels: missing });
     for (const name of current.filter((label) => shouldRemove(label) && !add.includes(label))) {
       await this.api('DELETE', `/issues/${number}/labels/${encodeURIComponent(name)}`, undefined, { allow: [404] });
     }
-    const missing = add.filter((label) => !current.includes(label));
-    if (missing.length > 0) await this.api('POST', `/issues/${number}/labels`, { labels: missing });
   }
 
   // --- Forge port -----------------------------------------------------------

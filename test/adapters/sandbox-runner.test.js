@@ -183,7 +183,7 @@ test('docker launcher: a step that passes its time limit is killed, and sandboxe
   const bin = join(root, 'fake-docker');
   writeFileSync(
     bin,
-    ['#!/bin/sh', 'state="$(dirname "$0")"', 'case "$1" in', '  ps) cat "$state/containers" 2>/dev/null ;;', '  rm) shift; shift; echo "$@" > "$state/removed" ;;', '  kill) touch "$state/killed-$2" ;;', '  *) while [ ! -e "$state/killed-box" ]; do sleep 0.05; done; exit 137 ;;', 'esac', ''].join('\n'),
+    ['#!/bin/sh', 'state="$(dirname "$0")"', 'case "$1" in', '  ps) if [ -e "$state/broken" ]; then exit 1; fi; cat "$state/containers" 2>/dev/null; exit 0 ;;', '  rm) shift; shift; echo "$@" > "$state/removed" ;;', '  kill) touch "$state/killed-$2" ;;', '  *) while [ ! -e "$state/killed-box" ]; do sleep 0.05; done; exit 137 ;;', 'esac', ''].join('\n'),
     { mode: 0o755 },
   );
   const launcher = new DockerLauncher(bin);
@@ -197,4 +197,6 @@ test('docker launcher: a step that passes its time limit is killed, and sandboxe
   writeFileSync(join(root, 'containers'), 'abc123\ndef456\n');
   assert.equal(await launcher.sweep(), 2);
   assert.equal(readFileSync(join(root, 'removed'), 'utf8').trim(), 'abc123 def456');
+  writeFileSync(join(root, 'broken'), '');
+  await assert.rejects(() => launcher.sweep(), /Could not list leftover sandboxes/, 'a runtime that does not answer is an error at start, not an empty list');
 });

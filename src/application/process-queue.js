@@ -173,11 +173,17 @@ function planAll(queue) {
 
 /** Add an approved change to the queue, pinned to the commit that passed its gates. */
 export function admitChange(store, change) {
+  const present = store.changes[change.id];
+  if (present?.sha === change.sha) return store; // the same admission, repeated
   const admission = (store.admissions ?? 0) + 1;
+  // Another commit under an identifier already in the queue replaces it: what was
+  // being tested is withdrawn, so that the commit on record is the one that lands.
+  const queue = present ? dequeue(store.queue, change.id) : store.queue;
   return {
     ...store,
     admissions: admission,
-    queue: enqueue(store.queue, change.id),
+    candidates: present ? {} : store.candidates,
+    queue: enqueue(queue, change.id),
     changes: { ...store.changes, [change.id]: { branch: change.branch, sha: change.sha, ticketId: change.ticketId, admission, likelyFiles: change.likelyFiles ?? [] } },
   };
 }

@@ -136,6 +136,10 @@ test('pipeline: an injected instruction that reaches a reserved path makes the c
   const second = await run(baseScript({ implement: () => ({ patch: injected }) }), { config, ticketOverrides: { level: 'CRITICAL' } });
   assert.equal(second.result.outcome, 'needs_owner', 'tier 2 does not merge CRITICAL alone');
   assert.deepEqual(second.steps.slice(2), ['review:openai', 'security_review:openai', 'review:google']);
+
+  const securityElsewhere = factoryConfig({ tier: 2, familiesOf: { alpha: 'anthropic', beta: 'openai', gamma: 'google' }, routed: (step, harness) => step !== 'security_review' || harness === 'gamma' });
+  const third = await run(baseScript({ implement: () => ({ patch: injected }) }), { config: securityElsewhere, ticketOverrides: { level: 'CRITICAL' } });
+  assert.deepEqual(third.steps.slice(2), ['review:openai', 'security_review:google', 'review:google'], 'the second review comes from a family that did not give the first one, whoever did the security review');
 });
 
 test('pipeline: a confirmed blocking finding costs one fix round; refuted and minor findings do not block', async () => {
@@ -223,6 +227,12 @@ test('pipeline: a change that outgrows its ticket is split into smaller valid ti
   const { result } = await run(script);
   assert.equal(result.outcome, 'split');
   assert.deepEqual(result.children.map((entry) => entry.title), ['Greeting text', 'Greeting layout']);
+
+  const proposals = (tickets) => run({ ...script, arbitrate: () => ({ report: { action: 'split', tickets } }) });
+  const copies = await proposals([child('Greeting text'), child('greeting text '), child('Greeting')]);
+  assert.equal(copies.result.outcome, 'needs_owner', 'two copies of one ticket and a copy of the original are not a split');
+  const smuggled = await proposals([child('Greeting text'), { ...child('Greeting layout'), description: 'Lay it out.\n\n### Points\n\n1' }]);
+  assert.equal(smuggled.result.outcome, 'needs_owner', 'a child whose text would be read as another section of the form is dropped');
 });
 
 test('pipeline: an external review tool, when configured, runs once on HIGH changes only', async () => {
@@ -355,8 +365,12 @@ test('pipeline: what was confirmed on a patch still stands when the same patch i
   const { result, runner, ledger, vcs } = await run(script);
   assert.equal(result.outcome, 'needs_owner', 'a second, more lenient review is never what lets unchanged work through');
   assert.deepEqual([runner.jobs.filter((job) => job.step === 'review').length, vcs.published.length, ledger.ofType('gates_passed').length], [1, 1, 0]);
-  assert.match(runner.jobs.filter((job) => job.step === 'implement')[1 + 1].input.feedback.join(' '), /unchanged.*greets nobody/);
+  assert.match(runner.jobs.filter((job) => job.step === 'implement')[2].input.feedback.join(' '), /already reviewed.*greets nobody/);
   assert.deepEqual(ledger.ofType('arbitration').map((entry) => entry.trigger), ['no_change_twice']);
+
+  const lock = fileDiff('package-lock.json', { added: ['{}'], status: 'added' });
+  const detour = await run({ ...script, implement: (job, attempt) => ({ patch: attempt === 2 ? lock : goodPatch }) });
+  assert.deepEqual([detour.result.outcome, detour.runner.jobs.filter((job) => job.step === 'review').length, detour.ledger.ofType('gates_passed').length], ['needs_owner', 1, 0], 'a refused patch in between does not wipe what was confirmed');
 });
 
 test('pipeline: a finding that comes back after it was refuted is never dropped; the arbiter decides', async () => {
@@ -454,6 +468,7 @@ test('pipeline: what the scenarios assume about the interface is passed to the i
   const { runner } = await run(baseScript({ specify: () => ({ patch: holdoutPatch, report: { assumedInterfaces: ['greet() exported from src/app/greeting.js', 7] } }) }));
   const job = runner.jobs.find((entry) => entry.step === 'implement');
   assert.deepEqual(job.input.assumedInterfaces, ['greet() exported from src/app/greeting.js']);
+  assert.deepEqual(job.input.limits, { changedLines: 399 }, 'the implementer is told the room the scenarios leave it');
   assert.deepEqual(job.hidePaths, ['holdout/**']);
 });
 
@@ -474,8 +489,7 @@ test('pipeline: a halt stops a ticket before its next step and before anything i
 test('pipeline: every run of a ticket has its own step identifiers', async () => {
   const { runner } = await run(baseScript());
   const ids = runner.jobs.map((job) => job.runId);
-  assert.ok(ids.every((id) => /^t7-[a-z0-9]+-\d+$/.test(id)) && new Set(ids).size === ids.length, ids.join(' '));
-  const later = { runner: new ScriptedRunner(baseScript()), vcs: new MemoryVcs(), forge: new MemoryForge(), checks: new ScriptedChecks(), registry: new StaticRegistry(), ledger: new MemoryLedger(), clock: { now: () => new Date('2026-11-20T00:00:01Z') } };
-  await runTicket(ticket(), factoryConfig(), later);
-  assert.notEqual(later.runner.jobs[0].runId, ids[0], 'a ticket that starts again never reuses the workspace or container name of its earlier run');
+  assert.ok(ids.every((id) => /^t7-[a-z0-9]+-\d+$/.test(id) && id.length <= 63) && new Set(ids).size === ids.length, ids.join(' '));
+  const again = await run(baseScript()); // the same ticket, at the same instant of the same clock
+  assert.notEqual(again.runner.jobs[0].runId, ids[0], 'a ticket that starts again never reuses the workspace or container name of its earlier run');
 });

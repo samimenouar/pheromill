@@ -61,8 +61,9 @@ async function repairTail(path) {
   let text;
   try {
     text = await readFile(path, 'utf8');
-  } catch {
-    return;
+  } catch (error) {
+    if (error.code === 'ENOENT') return; // no ledger yet
+    throw error; // unreadable is not empty: appending now could fork the chain
   }
   const end = text.lastIndexOf('\n') + 1;
   if (end !== text.length) await truncate(path, Buffer.byteLength(text.slice(0, end)));

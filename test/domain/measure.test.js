@@ -331,6 +331,7 @@ test('config: sections must be objects, misspelt keys are errors, and hostile pa
   assert.ok(validateConfig(harness({ provider: 'constructor' })).some((p) => p.includes('provider must name a configured provider')), 'a name every object inherits is not a provider');
   assert.ok(validateConfig(harness({ env: { MODEL: 7 } })).some((p) => p.includes('env values must be strings')));
   assert.ok(validateConfig(harness({ tokens: { file: '../usage.json', fields: [] } })).some((p) => p.includes('tokens must be {file, fields}')));
+  assert.ok(validateConfig(testConfig({ providers: { 'Open_AI': provider } })).some((p) => p.includes('lowercase letters, digits and hyphens')), 'a name the gateway could not route is refused at configuration time');
   const routed = { ...harness({}), routing: [{ step: 'implement', levels: ['LOW'], harness: 'hasOwnProperty', model: 'm', grade: 'C' }] };
   assert.ok(validateConfig(routed).some((p) => p.includes('harness must name a configured harness')));
 });

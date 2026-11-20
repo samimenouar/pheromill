@@ -60,6 +60,13 @@ export function parseTicket(issue) {
   };
 }
 
+/** True when a ticket written out as an issue body reads back as the same ticket: no field can smuggle a form heading. */
+export function survivesRendering(ticket) {
+  const read = parseTicket({ id: 'x', title: ticket.title, body: renderTicketBody(ticket), labels: [], milestone: null });
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  return read.wellFormed === true && same(read.acceptanceCriteria, ticket.acceptanceCriteria) && same(read.likelyFiles, ticket.likelyFiles) && read.points === ticket.points;
+}
+
 /** Render a ticket in the form format, so that tickets created by the factory parse like any other. */
 export function renderTicketBody(ticket) {
   return [

@@ -16,7 +16,8 @@ import { checkPatch } from '../domain/patch-policy.js';
 import { classifyRisk, LEVELS, maxLevel } from '../domain/risk.js';
 import { assertIndependentReview, families, RoutingError, selectRoute } from '../domain/routing.js';
 import { detectWeakening, touchesExistingTests } from '../domain/test-guard.js';
-import { closure, validateTicket } from '../domain/ticket.js';
+import { randomBytes } from 'node:crypto';
+import { closure, survivesRendering, validateTicket } from '../domain/ticket.js';
 
 const MAX_CHILDREN = 5;
 
@@ -71,14 +72,14 @@ export async function runTicket(ticket, config, ports) {
   let excludedAuthors = [];
   let authors = new Set();
   let lastAttempt = null; // the last patch this author produced, accepted or not
-  let standing = null; // confirmed findings and the patch they were confirmed on
+  let standing = new Map(); // patches of this author on which findings were confirmed, with those findings
   let changeId = null;
   let stepCount = 0;
   const base = await vcs.head(config.project.trunk);
   const branch = `factory/t${ticket.id}`;
   // Unique per run of the pipeline: a ticket that starts again never shares a
   // workspace or a container name with a step of its earlier run still ending.
-  const runId = `t${ticket.id}-${clock.now().getTime().toString(36)}`.toLowerCase();
+  const runId = `t${ticket.id}-${clock.now().getTime().toString(36)}${randomBytes(3).toString('hex')}`.toLowerCase();
 
   const unlessHalted = async () => {
     if (await ports.halted?.()) throw new Interrupted('The factory was halted by its owner.');
@@ -143,14 +144,19 @@ export async function runTicket(ticket, config, ports) {
     return { decision, proposal };
   };
 
-  /** A route outside `hard` families and, when one exists, outside `soft` families too. */
+  /**
+   * A route outside `hard` families and, as far as the configuration allows,
+   * outside `soft` families too. `soft` is ordered: the last ones are given up first.
+   */
   const routeFor = (query, hard, soft) => {
-    try {
-      return selectRoute(config, { ...query, excludeFamilies: [...hard, ...soft] });
-    } catch (error) {
-      if (!(error instanceof RoutingError) || soft.length === 0) throw error;
-      return selectRoute(config, { ...query, excludeFamilies: hard });
+    for (let kept = soft.length; kept > 0; kept -= 1) {
+      try {
+        return selectRoute(config, { ...query, excludeFamilies: [...hard, ...soft.slice(0, kept)] });
+      } catch (error) {
+        if (!(error instanceof RoutingError)) throw error;
+      }
     }
+    return selectRoute(config, { ...query, excludeFamilies: hard });
   };
 
   try {
@@ -179,7 +185,7 @@ export async function runTicket(ticket, config, ports) {
         authors = new Set();
         previous = null;
         lastAttempt = null;
-        standing = null;
+        standing = new Map();
         run.steps = [];
         run.changedLines = 0;
         run.raisedFingerprints = [];
@@ -189,7 +195,15 @@ export async function runTicket(ticket, config, ports) {
       }
       if (decision.action === 'split') {
         const proposed = Array.isArray(proposal?.tickets) ? proposal.tickets.slice(0, MAX_CHILDREN) : [];
-        const children = proposed.filter((child) => validateTicket(child, config).length === 0);
+        const titled = (entry) => String(entry?.title ?? '').trim().toLowerCase();
+        // A child must be a valid ticket, survive its own rendering, and be neither a copy of its parent nor of a sibling.
+        const children = proposed.filter(
+          (child, index) =>
+            validateTicket(child, config).length === 0 &&
+            survivesRendering(child) &&
+            titled(child) !== titled(ticket) &&
+            proposed.findIndex((other) => titled(other) === titled(child)) === index,
+        );
         if (children.length < 2) return stop('needs_owner', 'A split was decided but no valid set of smaller tickets was proposed.');
         return stop('split', decision.reason, { children });
       }
@@ -238,7 +252,7 @@ export async function runTicket(ticket, config, ports) {
         readOnly: false,
         hidePaths: config.paths.holdout,
         patches: previous ? [previous] : [],
-        input: { ticket, feedback, assumedInterfaces },
+        input: { ticket, feedback, assumedInterfaces, limits: { changedLines: Math.max(0, config.limits.midFlightChangedLines - holdoutLines) } },
       });
       const record = { errorSignature: null, changedFiles: 0 };
       run.steps.push(record);
@@ -273,12 +287,11 @@ export async function runTicket(ticket, config, ports) {
       }
       // What was confirmed on a patch stays confirmed on the same patch: a second,
       // more lenient review of unchanged work must not be what lets it through.
-      if (standing?.patch === change.patch && change.patch !== '') {
+      if (standing.has(change.patch)) {
         record.errorSignature = 'review:unchanged_after_findings';
-        feedback = await sendBack(['The patch is unchanged, so what was confirmed about it still stands.', ...standing.lines]);
+        feedback = await sendBack(['This patch was already reviewed, and what was confirmed about it still stands.', ...standing.get(change.patch)]);
         continue;
       }
-      standing = null;
 
       // Deterministic patch gate. The size limit applies to the change as published, scenarios included.
       const gate = checkPatch(files, config, { carriedLines: holdoutLines });
@@ -347,8 +360,8 @@ export async function runTicket(ticket, config, ports) {
       const unmet = new Set();
       const reviewerFamilies = new Set();
       const authorReport = { summary: produced.report?.summary ?? null, embeddedInstructions: strings(produced.report?.embeddedInstructions), notDone: strings(produced.report?.notDone) };
-      const review = async (step, exclude) => {
-        const route = routeFor({ step, level: risk.level }, exclude, [specifier]);
+      const review = async (step, exclude, avoid = [specifier]) => {
+        const route = routeFor({ step, level: risk.level }, exclude, avoid);
         assertIndependentReview([...authors], route.family);
         reviewerFamilies.add(route.family);
         const input = step === 'test_guard_review' ? { ticket, weakening } : { ticket, authorReport };
@@ -357,12 +370,15 @@ export async function runTicket(ticket, config, ports) {
         if (parsed.errors.length > 0) throw new Halt(`The ${step} report is malformed: ${parsed.errors[0]}`);
         raised.push(...parsed.findings);
         if (step === 'review') closure(ticket, result.report.criteria ?? {}).unmet.forEach((criterion) => unmet.add(criterion));
+        return route.family;
       };
-      for (const step of reviewSteps) await review(step, [...authors]);
-      if (gates.includes('second_independent_review')) {
-        const third = families(config).some((family) => !authors.has(family) && !reviewerFamilies.has(family));
-        await review('review', third ? [...authors, ...reviewerFamilies] : [...authors]);
+      let firstReviewer = null;
+      for (const step of reviewSteps) {
+        const family = await review(step, [...authors]);
+        if (step === 'review') firstReviewer = family;
       }
+      // The second review comes from a family that did not give the first one, when such a family exists.
+      if (gates.includes('second_independent_review')) await review('review', [...authors], [firstReviewer, specifier]);
 
       const again = async (loop) => {
         const handled = await onLoop(loop);
@@ -376,8 +392,8 @@ export async function runTicket(ticket, config, ports) {
         continue;
       }
       if (judged.blocking.length > 0 || unmet.size > 0) {
-        standing = { patch: change.patch, lines: [...judged.blocking.map(describe), ...[...unmet].map((criterion) => `Acceptance criterion not evidenced: ${criterion}`)] };
-        feedback = await sendBack(standing.lines);
+        standing.set(change.patch, [...judged.blocking.map(describe), ...[...unmet].map((criterion) => `Acceptance criterion not evidenced: ${criterion}`)]);
+        feedback = await sendBack(standing.get(change.patch));
         continue;
       }
 
@@ -389,7 +405,9 @@ export async function runTicket(ticket, config, ports) {
         } else {
           run.counters.externalToolPasses += 1;
           await unlessHalted();
-          const external = parseFindings(await ports.externalReview({ sha, patch: change.patch }));
+          const answer = await ports.externalReview({ sha, patch: change.patch });
+          await unlessHalted();
+          const external = parseFindings(answer);
           if (external.errors.length > 0) throw new Halt(`The external review report is malformed: ${external.errors[0]}`);
           const verdict = await judge(external.findings, risk.level, patches);
           if (verdict.loop) {
@@ -398,8 +416,8 @@ export async function runTicket(ticket, config, ports) {
             continue;
           }
           if (verdict.blocking.length > 0) {
-            standing = { patch: change.patch, lines: verdict.blocking.map(describe) };
-            feedback = await sendBack(standing.lines);
+            standing.set(change.patch, verdict.blocking.map(describe));
+            feedback = await sendBack(standing.get(change.patch));
             continue;
           }
         }

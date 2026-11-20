@@ -57,7 +57,7 @@ The level is computed from the paths a change touches. No model is asked.
 | --- | --- | --- |
 | LOW | Nothing below | Checks green, review by another family, no confirmed blocking finding |
 | HIGH | A core module, a dependency manifest, a git control file (`.gitattributes`, `.gitignore`, `.gitmodules`), an existing test, a test-weakening signal, or a dependency request | Security review; test guard review when an existing test was touched |
-| CRITICAL | A reserved path: configuration, pipelines, deployment, agent rules, and in this repository the factory's own source | A second independent review, from a third family when one exists |
+| CRITICAL | A reserved path: configuration, pipelines, deployment, agent rules, and in this repository the factory's own source | A second review, from a family that gave neither the first one nor the implementation when one exists |
 
 A change the factory cannot parse with certainty is CRITICAL and refused. A
 change that turns out to be riskier than its ticket was routed for is not

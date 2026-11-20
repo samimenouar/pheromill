@@ -9,6 +9,10 @@ Use GitHub's private vulnerability reporting for this repository: the
 found, how to reproduce it, and what an attacker could do with it. You will
 get an answer on the report itself.
 
+If that button is not shown, private reporting is not enabled yet. In that
+case open an issue that only says you have a security report to send and
+asks for a private channel. Put no detail in it.
+
 ## Scope
 
 Anything that lets an agent step, a ticket, a dependency or a network peer:

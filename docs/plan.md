@@ -31,7 +31,7 @@ owner's `factory:approved` label before it enters the merge queue.
 | Create a GitHub App for the control zone; provision one host | Yes: accounts and credentials cannot be created by the factory |
 | Build the factory image and two harness images from pinned bases | No |
 | Configure two harnesses from two families, a route for every step, and grades assigned by hand | Keys and grades: yes |
-| Set `forge.queueActor`; apply settings as code; start the three services | An administrator token, once |
+| Set `forge.queueActor`; apply settings as code; enable private vulnerability reporting; start the three services | An administrator token, once |
 | Run the first tickets end to end on this repository | Labelling tickets, approving changes |
 
 **Exit:** ten tickets landed through the pipeline and the queue; the claims

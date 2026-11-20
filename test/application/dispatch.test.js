@@ -292,3 +292,16 @@ test('spool: oversized submissions and a spool directory replaced by a link are 
   rmSync(spool, { recursive: true, force: true });
   rmSync(victim, { recursive: true, force: true });
 });
+
+test('spool: a runner that lost control of a sandbox answers the job, then stops serving', async () => {
+  const spool = mkdtempSync(join(tmpdir(), 'pheromill-spool-'));
+  const lost = Object.assign(new Error('Sandbox pheromill-t1 could not be stopped'), { fatal: true });
+  let runs = 0;
+  const serving = serveSpool({ spool, pollMs: 5, runner: { run: async () => { runs += 1; throw lost; } } }).then(() => null, (error) => error);
+  const client = new SpoolClient({ spool, pollMs: 5, timeoutMs: 2000 });
+  const answer = await client.run({ runId: 't1-1', step: 'implement' });
+  assert.match(answer.report.error, /could not be stopped/);
+  assert.equal(await serving, lost, 'the service ends; started again, it sweeps what it left behind');
+  assert.equal(runs, 1);
+  rmSync(spool, { recursive: true, force: true });
+});

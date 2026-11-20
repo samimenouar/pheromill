@@ -68,7 +68,7 @@ export class DockerLauncher {
         // Counted by the clock, not by answers: a kill command that hangs must not stop the count.
         if ((attempts += 1) > MAX_KILL_ATTEMPTS) {
           stop();
-          reject(new Error(`Sandbox ${spec.name} could not be stopped: the container runtime does not answer.`));
+          reject(Object.assign(new Error(`Sandbox ${spec.name} could not be stopped: the container runtime does not answer.`), { fatal: true }));
           return;
         }
         if (killing) return;

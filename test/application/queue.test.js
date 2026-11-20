@@ -211,18 +211,15 @@ test('queue tick: a landing that was interrupted is acknowledged even when the p
   assert.equal(moved.vcs.count - built, 1, 'one candidate is built for b; the queue does not spin');
 });
 
-test('queue: admitting the same commit again changes nothing; another commit under the same identifier replaces what was being tested', async () => {
+test('queue: admitting the same commit again changes nothing; another commit under an identifier already in the queue is refused', async () => {
   const context = setup({ batchSize: 2, maxParallelChecks: 1, flakyRetries: 0 }, ['a', 'b']);
   await context.tick();
   const before = context.store;
   context.admit('a');
   assert.equal(context.store, before);
-
-  context.store = admitChange(context.store, { id: 'a', branch: 'factory/ta', sha: 'reviewed-again', ticketId: 'a' });
-  assert.deepEqual([context.store.queue.pending, context.store.candidates, context.store.changes.a.sha], [['b', 'a'], {}, 'reviewed-again']);
+  assert.throws(() => admitChange(context.store, { id: 'a', branch: 'factory/ta', sha: 'reviewed-again', ticketId: 'a' }), /already in the merge queue with commit reviewed-a; reviewed-again was not admitted/);
   await drain(context);
-  assert.deepEqual(landed(context), ['b', 'a']);
-  assert.deepEqual(context.vcs.published, []);
+  assert.deepEqual([landed(context), context.vcs.contents.get(await context.vcs.head('main'))], [['a', 'b'], ['a', 'b']]);
 });
 
 test('queue tick: while the factory is halted, results are read but nothing lands and nobody is evicted', async () => {

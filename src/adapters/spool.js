@@ -92,6 +92,7 @@ export async function serveSpool(options) {
   const { jobs, results } = await directories(options.spool);
   const inFlight = new Set();
   const abandoned = new Set();
+  let fatal = null;
 
   const serve = async (name, runId) => {
     let result;
@@ -102,6 +103,7 @@ export async function serveSpool(options) {
       result = await options.runner.run(job);
     } catch (error) {
       result = { error: error.message };
+      if (error.fatal) fatal = error; // answer this job, then stop serving
     }
     let text = JSON.stringify(result);
     if (Buffer.byteLength(text) > MAX_BYTES) text = JSON.stringify({ error: 'The step produced more output than the spool carries.' });
@@ -110,7 +112,9 @@ export async function serveSpool(options) {
   };
 
   while (!options.signal?.aborted) {
-    for (const name of await readdir(jobs)) {
+    // An execution zone that lost control of a sandbox takes no new job: it stops, and is swept when it starts again.
+    if (fatal && inFlight.size === 0) throw fatal;
+    for (const name of fatal ? [] : await readdir(jobs)) {
       const match = FILE.exec(name);
       if (!match || inFlight.has(name) || abandoned.has(name)) continue;
       inFlight.add(name);

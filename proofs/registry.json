@@ -305,7 +305,7 @@
     {
       "id": "gates-by-level",
       "area": "Risk and gates",
-      "claim": "Review gates grow with the risk level; the second review of a CRITICAL change comes from a family that did not give the first one when such a family exists; a change riskier than its ticket was routed for is sent back",
+      "claim": "Review gates grow with the risk level; the second review of a CRITICAL change comes from a family that wrote neither the implementation nor the first review when such a family exists; a change riskier than its ticket was routed for is sent back",
       "status": "PROVEN",
       "evidence": [
         {
@@ -762,7 +762,7 @@
         },
         {
           "file": "test/application/queue.test.js",
-          "test": "queue: admitting the same commit again changes nothing; another commit under the same identifier replaces what was being tested"
+          "test": "queue: admitting the same commit again changes nothing; another commit under an identifier already in the queue is refused"
         }
       ]
     },
@@ -999,7 +999,7 @@
     {
       "id": "sandbox-timeout-and-leftovers",
       "area": "Sandbox",
-      "claim": "A step past its time limit is killed, and sandboxes left by a runner that died are removed when the runner starts",
+      "claim": "A step past its time limit is killed; a runner that cannot stop a sandbox stops serving, and sandboxes left by a runner that died are removed when it starts",
       "status": "PROVEN",
       "evidence": [
         {
@@ -1009,6 +1009,10 @@
         {
           "file": "integration/docker.test.js",
           "test": "docker: a step that exceeds its time limit is killed and its container removed"
+        },
+        {
+          "file": "test/application/dispatch.test.js",
+          "test": "spool: a runner that lost control of a sandbox answers the job, then stops serving"
         }
       ]
     },

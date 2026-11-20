@@ -806,7 +806,7 @@
       "evidence": [
         {
           "file": "test/application/queue.test.js",
-          "test": "queue tick: random admissions, failures, timings, interrupted ticks and outside commits always converge on the right trunk"
+          "test": "queue tick: random admissions, failures, timings, faults on any call, lost ticks and outside commits always converge on the right trunk"
         },
         {
           "file": "test/application/queue.test.js",
@@ -846,7 +846,7 @@
         },
         {
           "file": "test/application/queue.test.js",
-          "test": "queue tick: random admissions, failures, timings, interrupted ticks and outside commits always converge on the right trunk"
+          "test": "queue tick: random admissions, failures, timings, faults on any call, lost ticks and outside commits always converge on the right trunk"
         },
         {
           "file": "test/adapters/files-and-registry.test.js",
@@ -859,6 +859,10 @@
         {
           "file": "test/domain/flow.test.js",
           "test": "merge queue: changes found on the trunk leave the queue, bisection keeps its conclusion, and the rest is planned afresh"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: records are delivered after the state is saved, and delivering them twice leaves one trace"
         }
       ]
     },

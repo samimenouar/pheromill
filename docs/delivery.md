@@ -102,7 +102,7 @@ flowchart LR
 | Flaky tolerance | A failed candidate is retried once. A pass after a failure is recorded in the ledger. |
 | Conflicts | A change that conflicts with the future trunk is evicted before any run. |
 | Outside moves | If the trunk moves outside the queue, candidates are rebuilt on the new head. |
-| Interruptions | A tick stopped anywhere is replayed from the saved state and from what the trunk contains: each change lands, is evicted and is recorded once. |
+| Interruptions | A tick writes nothing about a decision before the state that holds it is saved; ledger entries and labels follow at the next tick, and a landing is read back from the trunk. A tick stopped anywhere is replayed with each change landed, evicted and recorded once. |
 
 The queue is implemented here rather than delegated to the forge, because a
 forge-native queue is not available everywhere (GitHub's is limited to

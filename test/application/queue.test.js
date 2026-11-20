@@ -27,10 +27,13 @@ function setup(queueConfig, ids = []) {
   return context;
 }
 
+/** Nothing left to test, land or write down. */
+const idle = (context) => context.store.queue.pending.length === 0 && Object.keys(context.store.candidates).length === 0 && (context.store.outbox ?? []).length === 0;
+
 async function drain(context, isBad, maxTicks = 40) {
   for (let tick = 0; tick < maxTicks; tick += 1) {
     await context.tick();
-    if (context.store.queue.pending.length === 0 && Object.keys(context.store.candidates).length === 0) return;
+    if (idle(context)) return;
     context.judge(isBad);
   }
   throw new Error('The queue did not drain.');
@@ -129,16 +132,35 @@ test('queue tick: a tick interrupted after the fast-forward is replayed without 
   const context = setup({ batchSize: 1, maxParallelChecks: 1, flakyRetries: 0 }, ['a']);
   await context.tick();
   context.judge();
-  const before = context.store;
-  context.forge.setTicketState = async () => {
-    throw new Error('forge unreachable');
-  };
-  await assert.rejects(() => queueTick(before, config, context.ports), /forge unreachable/);
-  context.forge.setTicketState = MemoryForge.prototype.setTicketState;
-  context.store = await queueTick(before, config, context.ports);
-  assert.equal(context.ledger.ofType('merge').length, 1);
-  assert.equal(context.forge.tickets.get('a').state, 'done');
+  await queueTick(context.store, config, context.ports); // lands a; the state it returns is never saved
+  const landedAt = await context.vcs.head('main');
+  assert.notEqual(landedAt, 'base');
+  assert.equal(context.ledger.entries.length, 0, 'a tick writes nothing about a decision before its state is saved');
+  await drain(context);
+  assert.deepEqual([await context.vcs.head('main'), landed(context), context.forge.tickets.get('a').state], [landedAt, ['a'], 'done']);
   assert.deepEqual(context.store.queue.pending, []);
+});
+
+test('queue tick: records are delivered after the state is saved, and delivering them twice leaves one trace', async () => {
+  const context = setup({ batchSize: 1, maxParallelChecks: 2, flakyRetries: 0 }, ['a', 'b']);
+  await context.tick();
+  context.judge((id) => id === 'b');
+  await context.tick();
+  assert.deepEqual(context.store.outbox.map((effect) => [effect.type, effect.change]), [['merge', 'a'], ['evict', 'b']]);
+  assert.deepEqual([landed(context), evicted(context)], [[], []]);
+
+  const real = context.forge.setTicketState;
+  context.forge.setTicketState = async (id, ...rest) => {
+    if (id === 'b') throw new Error('forge unreachable');
+    return real.call(context.forge, id, ...rest);
+  };
+  await assert.rejects(() => context.tick(), /forge unreachable/);
+  assert.deepEqual([landed(context), evicted(context), context.forge.tickets.get('b')?.state], [['a'], ['b'], undefined], 'the delivery stopped half way');
+  context.forge.setTicketState = real;
+  await drain(context);
+  assert.deepEqual([landed(context), evicted(context)], [['a'], ['b']]);
+  assert.deepEqual(context.ledger.ofType('ticket_outcome').map((entry) => [entry.ticket, entry.outcome]), [['b', 'rework']]);
+  assert.deepEqual([context.forge.tickets.get('a').state, context.forge.tickets.get('b').state], ['done', 'rework']);
 });
 
 test('queue tick: a tick interrupted after several landings, or after an eviction, is replayed with each effect recorded once', async () => {
@@ -157,15 +179,12 @@ test('queue tick: a tick interrupted after several landings, or after an evictio
   const again = setup({ batchSize: 1, maxParallelChecks: 1, flakyRetries: 0 }, ['x']);
   await again.tick();
   again.judge(() => true);
-  const saved = again.store;
-  await queueTick(saved, config, again.ports);
-  await queueTick(saved, config, again.ports);
-  assert.deepEqual(evicted(again), ['x'], 'a replayed eviction counts once against the ticket');
-  again.store = await queueTick(saved, config, again.ports);
+  await queueTick(again.store, config, again.ports);
+  await queueTick(again.store, config, again.ports); // two ticks decide the eviction and are lost
+  await drain(again, () => true);
+  assert.deepEqual(evicted(again), ['x'], 'an eviction decided several times and saved once counts once against the ticket');
   again.admit('x');
-  await again.tick();
-  again.judge(() => true);
-  await again.tick();
+  await drain(again, () => true);
   assert.deepEqual(evicted(again), ['x', 'x'], 'a later stay of the same commit in the queue is another eviction');
 });
 
@@ -174,11 +193,7 @@ test('queue tick: a landing that was interrupted is acknowledged even when the p
     const context = setup({ batchSize: 2, maxParallelChecks: 1, flakyRetries: 0 }, ['a']);
     await context.tick();
     context.judge();
-    context.forge.setTicketState = async () => {
-      throw new Error('forge unreachable');
-    };
-    await assert.rejects(() => queueTick(context.store, config, context.ports), /forge unreachable/);
-    delete context.forge.setTicketState;
+    await queueTick(context.store, config, context.ports); // lands a; its state is lost
     context.admit('b'); // admitted before the replay: the head candidate is no longer "a" alone
     return context;
   };
@@ -203,39 +218,65 @@ test('queue tick: while the factory is halted, results are read but nothing land
   await context.tick();
   context.judge((id) => id === 'b');
   await context.tick();
-  assert.deepEqual([await context.vcs.head('main'), landed(context), evicted(context)], ['base', [], []]);
+  await context.tick();
+  assert.deepEqual([await context.vcs.head('main'), landed(context), evicted(context), context.store.outbox], ['base', [], [], []]);
   halted = false;
   await drain(context, (id) => id === 'b');
   assert.deepEqual([landed(context), evicted(context)], [['a'], ['b']]);
 });
 
-test('queue tick: random admissions, failures, timings, interrupted ticks and outside commits always converge on the right trunk', async () => {
+/** Wrap a port so that any call may fail, as a forge, a disk or a network does. */
+function unreliable(port, fails) {
+  return new Proxy(port, {
+    get: (target, name) =>
+      typeof target[name] !== 'function'
+        ? target[name]
+        : async (...args) => {
+            if (fails()) throw new Error('injected fault');
+            return target[name](...args);
+          },
+  });
+}
+
+test('queue tick: random admissions, failures, timings, faults on any call, lost ticks and outside commits always converge on the right trunk', async () => {
   let seed = 20261120;
   const random = () => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
     return seed / 2147483648;
   };
-  for (let round = 0; round < 300; round += 1) {
+  for (let round = 0; round < 400; round += 1) {
     const queueConfig = { batchSize: 1 + Math.floor(random() * 4), maxParallelChecks: 1 + Math.floor(random() * 3), flakyRetries: Math.floor(random() * 2) };
     const context = setup(queueConfig);
+    let chaos = true;
+    const fails = () => chaos && random() < 0.02;
+    const ports = { vcs: unreliable(context.vcs, fails), forge: unreliable(context.forge, fails), ledger: unreliable(context.ledger, fails), checks: unreliable(context.checks, fails) };
     const ids = Array.from({ length: 2 + Math.floor(random() * 6) }, (_, index) => `p${index}`);
     const bad = new Set(ids.filter(() => random() < 0.25));
     const waiting = [...ids];
-    for (let tick = 0; tick < 200; tick += 1) {
+    let settled = false;
+    for (let tick = 0; tick < 400 && !settled; tick += 1) {
+      chaos = tick < 150;
       while (waiting.length > 0 && random() < 0.5) context.admit(waiting.shift());
-      if (random() < 0.15) await queueTick(context.store, config, context.ports); // a tick whose state is lost before it is saved
+      if (chaos && random() < 0.15) await queueTick(context.store, config, ports).catch(() => {}); // a tick whose state is lost before it is saved
       if (waiting.length > 0 && random() < 0.3) context.admit(waiting.shift()); // the dispatcher admits a change before the replay
-      if (random() < 0.03) outside(context); // a person merges something by hand
-      await context.tick();
+      if (chaos && random() < 0.03) outside(context); // a person merges something by hand
+      try {
+        context.store = await queueTick(context.store, config, ports);
+      } catch (error) {
+        assert.equal(error.message, 'injected fault'); // the tick stopped where a port failed; nothing was saved
+      }
       // Verdicts arrive in a random order and at random times.
       for (const [sha, changes] of context.vcs.contents) {
         if (!context.verdicts.has(sha) && random() < 0.6) context.verdicts.set(sha, changes.some((id) => bad.has(id)) ? 'fail' : 'pass');
       }
-      if (waiting.length === 0 && context.store.queue.pending.length === 0 && Object.keys(context.store.candidates).length === 0) break;
+      settled = !chaos && waiting.length === 0 && idle(context);
     }
     const label = `round ${round} ${JSON.stringify(queueConfig)} bad=${[...bad]}`;
+    assert.ok(settled, `${label}: the queue did not settle`);
     assert.deepEqual(landed(context).sort(), ids.filter((id) => !bad.has(id)).sort(), label);
     assert.deepEqual(evicted(context).sort(), [...bad].sort(), label);
+    assert.deepEqual(context.ledger.ofType('ticket_outcome').map((entry) => entry.ticket).sort(), [...bad].sort(), `${label}: one rework per eviction`);
     assert.deepEqual((await onTrunk(context)).sort(), ids.filter((id) => !bad.has(id)).sort(), `${label}: each good change is on the trunk exactly once`);
+    for (const id of ids) assert.equal(context.forge.tickets.get(id)?.state, bad.has(id) ? 'rework' : 'done', `${label}: ticket ${id}`);
   }
 });

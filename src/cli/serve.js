@@ -76,7 +76,7 @@ async function control(io) {
   // One store and one spool client for the whole process: both loops must share
   // the same writer, or one would overwrite what the other just saved.
   const first = await trunkConfig(vcs, trunk);
-  const store = new JsonStore(join(state, 'queue.json'), { queue: createQueue(first.queue), candidates: {}, changes: {}, awaiting: {} });
+  const store = new JsonStore(join(state, 'queue.json'), { queue: createQueue(first.queue), candidates: {}, changes: {}, awaiting: {}, outbox: [] });
   const runner = new SpoolClient({ spool: join(state, 'spool') });
   const registry = new NpmRegistry();
 

@@ -244,14 +244,17 @@ PROVISIONAL(license): the license was chosen by the author of the genesis import
 
 ## D-20 The trunk and the saved state decide, not the memory of a tick
 
-- **Decision.** A queue tick may stop anywhere. The next one treats a
-  candidate the trunk already contains as landed, whatever the plan has
-  become since, and records each landing and eviction under the identity of
-  one stay in the queue, so that a replay leaves one trace.
+- **Decision.** A queue tick may stop anywhere. Its only direct effect is the
+  fast-forward; the next tick treats a candidate the trunk already contains
+  as landed, whatever the plan has become since. Ledger entries and ticket
+  labels are put in an outbox saved with the state and delivered by the next
+  tick, each under the identity of one stay in the queue.
 - **Why.** The fast-forward, the ledger and the state file cannot be written
-  in one atomic step.
+  in one atomic step, and a record written before its decision is saved can
+  describe something that never happened.
 - **Benefit.** A crash, a full disk or a forge outage in the middle of a tick
-  cannot land, evict or count a change twice.
+  cannot land, evict or count a change twice, nor record an eviction that did
+  not take place. Labels and ledger entries follow a decision by one tick.
 - **Risk.** A commit pushed to the trunk by hand that happens to be a queue
   candidate is taken for a landing of that candidate. That is the correct
   reading. To reverse: none needed.

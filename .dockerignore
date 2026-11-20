@@ -1,0 +1,8 @@
+.git
+deploy/*.env
+deploy/.env
+*.pem
+*.key
+*.iid
+var/
+node_modules/

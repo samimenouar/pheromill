@@ -1,0 +1,79 @@
+# Pheromill on one host: three services, each holding one kind of secret.
+#
+#   control  holds the forge credential. No container daemon, no model key.
+#   runner   holds container daemon access. No forge credential, no model key.
+#   egress   holds the model provider keys. No forge credential, no daemon.
+#
+# LIMIT OF THIS FILE: on a single host the separation is between processes
+# only. The runner talks to the container daemon, and whoever controls that
+# daemon controls the host, including the other two services' secrets. Use
+# this file to evaluate the factory. For production, run the runner and egress
+# services on a second machine (see docs/security.md).
+#
+# Agent steps run in separate containers started by the runner on the internal
+# network "pheromill-sandbox". That network has no route to the outside; the
+# egress service is the only way out. Sandboxes on it can reach each other.
+#
+# Before the first start: sh deploy/setup.sh, sh deploy/build.sh, then copy
+# deploy/*.env.example to deploy/*.env and fill them in. See docs/operations.md.
+name: pheromill
+
+x-service: &service
+  image: ${PHEROMILL_IMAGE:?set PHEROMILL_IMAGE to the identifier printed by deploy/build.sh}
+  restart: unless-stopped
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp"]
+
+services:
+  control:
+    <<: *service
+    command: ["serve", "control"]
+    env_file: [control.env]
+    environment:
+      PHEROMILL_STATE_DIR: /state
+      PHEROMILL_REPOSITORY: ${PHEROMILL_REPOSITORY:?set PHEROMILL_REPOSITORY to owner/name}
+    volumes:
+      - ${PHEROMILL_HOME:-/var/lib/pheromill}/control:/state
+      - ${PHEROMILL_HOME:-/var/lib/pheromill}/spool:/state/spool
+    networks: [control]
+
+  runner:
+    <<: *service
+    command: ["serve", "runner"]
+    group_add: ["${DOCKER_GID:?set DOCKER_GID to the group id that owns /var/run/docker.sock}"]
+    environment:
+      # Same path inside and outside the container, so that the bind mounts the
+      # runner asks the daemon for resolve on the host.
+      PHEROMILL_STATE_DIR: ${PHEROMILL_HOME:-/var/lib/pheromill}/runner
+      PHEROMILL_REPOSITORY: ${PHEROMILL_REPOSITORY:?}
+      PHEROMILL_READ_TOKEN: ${PHEROMILL_READ_TOKEN:-}
+    volumes:
+      - ${PHEROMILL_HOME:-/var/lib/pheromill}/runner:${PHEROMILL_HOME:-/var/lib/pheromill}/runner
+      - ${PHEROMILL_HOME:-/var/lib/pheromill}/spool:${PHEROMILL_HOME:-/var/lib/pheromill}/runner/spool
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_CLI:-/usr/bin/docker}:/usr/local/bin/docker:ro
+    networks: [runner]
+
+  egress:
+    <<: *service
+    command: ["serve", "egress"]
+    env_file: [egress.env]
+    environment:
+      PHEROMILL_STATE_DIR: /state
+      PHEROMILL_REPOSITORY: ${PHEROMILL_REPOSITORY:?}
+      PHEROMILL_READ_TOKEN: ${PHEROMILL_READ_TOKEN:-}
+    volumes:
+      - ${PHEROMILL_HOME:-/var/lib/pheromill}/egress:/state
+      - ${PHEROMILL_HOME:-/var/lib/pheromill}/runner/grants:/state/grants:ro
+    networks: [sandbox, outbound]
+
+networks:
+  control: {}
+  runner: {}
+  outbound: {}
+  sandbox:
+    name: pheromill-sandbox
+    external: true

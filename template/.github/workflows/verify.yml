@@ -1,0 +1,26 @@
+# The one check that proves a change. The workflow only calls the verify
+# command; every rule lives in the repository, not in this file, so moving to
+# another forge or runner means rewriting these few lines and nothing else.
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main, "queue/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: sh scripts/verify.sh

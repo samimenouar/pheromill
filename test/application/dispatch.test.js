@@ -299,8 +299,7 @@ test('spool: a runner that lost control of a sandbox answers the job, then stops
   let runs = 0;
   const serving = serveSpool({ spool, pollMs: 5, runner: { run: async () => { runs += 1; throw lost; } } }).then(() => null, (error) => error);
   const client = new SpoolClient({ spool, pollMs: 5, timeoutMs: 2000 });
-  const answer = await client.run({ runId: 't1-1', step: 'implement' });
-  assert.match(answer.report.error, /could not be stopped/);
+  await assert.rejects(() => client.run({ runId: 't1-1', step: 'implement' }), /could not be stopped/, 'the job in hand is answered');
   assert.equal(await serving, lost, 'the service ends; started again, it sweeps what it left behind');
   assert.equal(runs, 1);
   rmSync(spool, { recursive: true, force: true });

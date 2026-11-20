@@ -39,7 +39,7 @@
     {
       "id": "ticket-trusted-author",
       "area": "Tickets and scheduling",
-      "claim": "Only issues labelled ready and written by someone the repository already trusts, or proposed by the factory itself, become tickets",
+      "claim": "Only issues labelled ready and written by someone the repository already trusts, or by the factory's own App, become tickets",
       "status": "PROVEN",
       "evidence": [
         {
@@ -165,6 +165,10 @@
         {
           "file": "test/application/dispatch.test.js",
           "test": "dispatcher: an unexpected pipeline error stops that ticket only and is recorded"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: every run of a ticket has its own step identifiers"
         }
       ]
     },
@@ -452,7 +456,7 @@
     {
       "id": "refutation",
       "area": "Independence and anti-cheating",
-      "claim": "A finding is dropped only by an explicit refutation from a family that did not write the implementation; one that comes back after it was refuted goes to the arbiter; minor findings are recorded as debt and never become tickets",
+      "claim": "A finding is dropped only by an explicit refutation from a family that did not write the implementation, never by a later review of the same patch; one that comes back after it was refuted goes to the arbiter; minor findings are recorded as debt and never become tickets",
       "status": "PROVEN",
       "evidence": [
         {
@@ -474,6 +478,10 @@
         {
           "file": "test/domain/measure.test.js",
           "test": "findings: two findings that differ only by numbers each get their own identity and verdict"
+        },
+        {
+          "file": "holdout/pipeline.test.js",
+          "test": "pipeline: what was confirmed on a patch still stands when the same patch is handed in again"
         }
       ]
     },
@@ -650,7 +658,7 @@
     {
       "id": "halt",
       "area": "Loops and budget",
-      "claim": "On a halt signal no step starts, nothing is published and nothing lands; a stopped ticket resumes later without using its allowance",
+      "claim": "On a halt signal no step starts, nothing is published and nothing lands; a stopped ticket, even one whose step was killed, resumes later without using its allowance",
       "status": "PROVEN",
       "evidence": [
         {
@@ -798,7 +806,7 @@
       "evidence": [
         {
           "file": "test/application/queue.test.js",
-          "test": "queue tick: random admissions, failures, timings and interrupted ticks always converge on the right trunk"
+          "test": "queue tick: random admissions, failures, timings, interrupted ticks and outside commits always converge on the right trunk"
         },
         {
           "file": "test/application/queue.test.js",
@@ -825,7 +833,7 @@
     {
       "id": "queue-replay",
       "area": "Merge queue",
-      "claim": "A queue tick interrupted anywhere is replayed with every change landed, evicted and recorded exactly once",
+      "claim": "A queue tick interrupted anywhere is replayed with every change landed, evicted and recorded exactly once, whatever was admitted or pushed in between",
       "status": "PROVEN",
       "evidence": [
         {
@@ -838,11 +846,19 @@
         },
         {
           "file": "test/application/queue.test.js",
-          "test": "queue tick: random admissions, failures, timings and interrupted ticks always converge on the right trunk"
+          "test": "queue tick: random admissions, failures, timings, interrupted ticks and outside commits always converge on the right trunk"
         },
         {
           "file": "test/adapters/files-and-registry.test.js",
           "test": "files: an operation recorded once stays recorded once when it is replayed, also after a restart"
+        },
+        {
+          "file": "test/application/queue.test.js",
+          "test": "queue tick: a landing that was interrupted is acknowledged even when the plan changed before the replay"
+        },
+        {
+          "file": "test/domain/flow.test.js",
+          "test": "merge queue: changes found on the trunk leave the queue, bisection keeps its conclusion, and the rest is planned afresh"
         }
       ]
     },
@@ -1400,7 +1416,7 @@
     {
       "id": "github-adapter",
       "area": "Forge and configuration",
-      "claim": "The GitHub adapter sends the expected requests for tickets, change requests, approvals and checks, reads lists to their last page and never replaces a label set as a whole (against a double)",
+      "claim": "The GitHub adapter sends the expected requests for tickets, change requests, approvals and checks, reads lists to their last page, bounds every request in time and never replaces a label set as a whole (against a double)",
       "status": "PROVEN",
       "evidence": [
         {

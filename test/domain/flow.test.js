@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { arbitrate, budgetFor, detectLoop, exceeded, nearLimit, returnedFinding, usage } from '../../src/domain/budget.js';
-import { createQueue, dequeue, enqueue, forget, plan, recordResult, settle } from '../../src/domain/merge-queue.js';
+import { acknowledgeLanded, createQueue, dequeue, enqueue, forget, plan, recordResult, settle } from '../../src/domain/merge-queue.js';
 import { debtIsDue, selectRunnable } from '../../src/domain/scheduler.js';
 import { admit, closure, parseTicket, renderTicketBody, validateTicket } from '../../src/domain/ticket.js';
 import { testConfig } from '../helpers.js';
@@ -265,4 +265,18 @@ test('ticket: list markers of every common style are read; paths that climb or r
 test('loop detection: a finding raised again after it was refuted is named', () => {
   assert.equal(returnedFinding({ refutedFingerprints: ['aa', 'bb'], raisedFingerprints: ['cc', 'bb'] }), 'bb');
   assert.equal(returnedFinding({ refutedFingerprints: ['aa'], raisedFingerprints: ['cc'] }), null);
+});
+
+test('merge queue: changes found on the trunk leave the queue, bisection keeps its conclusion, and the rest is planned afresh', () => {
+  let state = ['a', 'b', 'c'].reduce(enqueue, createQueue({ batchSize: 2, maxParallelChecks: 2, flakyRetries: 0 }));
+  state = recordResult(state, plan(state)[0].key, 'pass');
+  const { state: next, evicted } = acknowledgeLanded(state, ['a']);
+  assert.deepEqual([next.pending, next.landed, next.epoch, next.results, evicted], [['b', 'c'], [], 1, {}, null]);
+  assert.deepEqual(plan(next).map((candidate) => candidate.key), ['e1:b+c']);
+  assert.deepEqual(acknowledgeLanded(next, ['a', 'z']), { state: next, evicted: null }, 'nothing to acknowledge, nothing changes');
+
+  const bisecting = settle(recordResult(state, 'e0:a+b', 'fail')).state;
+  assert.deepEqual(bisecting.suspect, ['a', 'b']);
+  const concluded = acknowledgeLanded(bisecting, ['a']);
+  assert.deepEqual([concluded.evicted, concluded.state.pending, concluded.state.suspect], ['b', ['c'], null], 'the half that landed clears a; b alone is the culprit');
 });

@@ -186,3 +186,9 @@ test('git: a mirror whose first fetch failed is not taken for a mirror', async (
   await cloneMirror(join(root, 'remote.git'), directory);
   assert.equal(await new GitVcs({ mirror: directory }).head('main'), base);
 });
+
+test('git: a remote that does not answer in time is an error, not a wait without end', async () => {
+  const slow = new GitVcs({ mirror: join(root, 'mirror.git'), networkTimeoutMs: 1 });
+  await assert.rejects(() => slow.fetch(), /did not finish within 1 ms/);
+  assert.equal(await slow.head('main'), base, 'local operations are not bounded');
+});

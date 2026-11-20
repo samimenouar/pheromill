@@ -42,6 +42,23 @@ export function dequeue(state, id) {
   return resetEpoch({ ...state, pending: state.pending.filter((other) => other !== id) });
 }
 
+/**
+ * Take note that changes are already on the trunk without the queue having
+ * settled them: a tick landed them and stopped before it saved its state, or
+ * someone pushed a candidate by hand. The bisection rule still applies: when
+ * the rest of a failed batch is a single change, it is the culprit. Everything
+ * else is planned again.
+ * @returns {{state: object, evicted: string|null}}
+ */
+export function acknowledgeLanded(state, ids) {
+  if (!ids.some((id) => state.pending.includes(id))) return { state, evicted: null };
+  let pending = state.pending.filter((id) => !ids.includes(id));
+  const suspects = state.suspect?.filter((id) => pending.includes(id)) ?? [];
+  const evicted = state.suspect && suspects.length === 1 ? suspects[0] : null;
+  if (evicted) pending = pending.filter((id) => id !== evicted);
+  return { state: resetEpoch({ ...state, pending }), evicted };
+}
+
 function keyFor(state, count) {
   // The epoch makes a late result for a discarded candidate impossible to match.
   return `e${state.epoch}:${[...state.landed, ...state.pending.slice(0, count)].join('+')}`;

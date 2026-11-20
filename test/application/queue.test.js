@@ -36,16 +36,26 @@ async function drain(context, isBad, maxTicks = 40) {
   throw new Error('The queue did not drain.');
 }
 
-const landed = (context) => context.ledger.ofType('merge').flatMap((entry) => entry.changes);
+const landed = (context) => context.ledger.ofType('merge').map((entry) => entry.change);
 const evicted = (context) => context.ledger.ofType('evict').map((entry) => entry.change);
 const onTrunk = async (context) => context.vcs.contents.get(await context.vcs.head('main')) ?? [];
+
+/** A hand-made commit on the trunk; it carries what the trunk already had. */
+function outside(context) {
+  const head = context.vcs.refs.get('main');
+  const commit = context.vcs.commit(head);
+  context.vcs.contents.set(commit, context.vcs.contents.get(head) ?? []);
+  context.vcs.refs.set('main', commit);
+}
 
 test('queue tick: the trunk only fast-forwards to candidates whose checks passed', async () => {
   const context = setup({ batchSize: 2, maxParallelChecks: 2, flakyRetries: 0 }, ['a', 'b', 'c']);
   await context.tick();
   assert.equal(await context.vcs.head('main'), 'base', 'nothing lands while checks are pending');
   await drain(context);
-  assert.deepEqual(context.ledger.ofType('merge').map((entry) => entry.changes), [['a', 'b'], ['c']]);
+  const merges = context.ledger.ofType('merge');
+  assert.deepEqual(landed(context), ['a', 'b', 'c']);
+  assert.ok(merges[0].sha === merges[1].sha && merges[1].sha !== merges[2].sha, 'a and b landed as one tested candidate, c as the next');
   assert.equal(await context.vcs.head('main'), context.ledger.ofType('merge').at(-1).sha);
   assert.equal(context.verdicts.get(await context.vcs.head('main')), 'pass');
   assert.deepEqual(['a', 'b', 'c'].map((id) => context.forge.tickets.get(id).state), ['done', 'done', 'done']);
@@ -65,7 +75,7 @@ test('queue tick: a change that conflicts with the future trunk is evicted befor
   const context = setup({ batchSize: 2, maxParallelChecks: 1, flakyRetries: 0 }, ['a', 'b']);
   context.vcs.conflicts.add('b');
   await drain(context);
-  assert.deepEqual(context.ledger.ofType('evict'), [{ change: 'b', ticket: 'b', reason: 'Conflicts with the future trunk.', identity: 'b@reviewed-b#e0' }]);
+  assert.deepEqual(context.ledger.ofType('evict'), [{ change: 'b', ticket: 'b', reason: 'Conflicts with the future trunk.', identity: 'b@reviewed-b#2' }]);
   assert.deepEqual(landed(context), ['a']);
   assert.deepEqual(context.store.changes, {});
 });
@@ -159,6 +169,33 @@ test('queue tick: a tick interrupted after several landings, or after an evictio
   assert.deepEqual(evicted(again), ['x', 'x'], 'a later stay of the same commit in the queue is another eviction');
 });
 
+test('queue tick: a landing that was interrupted is acknowledged even when the plan changed before the replay', async () => {
+  const interrupted = async () => {
+    const context = setup({ batchSize: 2, maxParallelChecks: 1, flakyRetries: 0 }, ['a']);
+    await context.tick();
+    context.judge();
+    context.forge.setTicketState = async () => {
+      throw new Error('forge unreachable');
+    };
+    await assert.rejects(() => queueTick(context.store, config, context.ports), /forge unreachable/);
+    delete context.forge.setTicketState;
+    context.admit('b'); // admitted before the replay: the head candidate is no longer "a" alone
+    return context;
+  };
+
+  const evicting = await interrupted();
+  evicting.vcs.conflicts.add('b');
+  await drain(evicting);
+  assert.deepEqual([landed(evicting), evicted(evicting), await onTrunk(evicting)], [['a'], ['b'], ['a']], 'a is not landed a second time when b leaves the queue');
+
+  const moved = await interrupted();
+  outside(moved);
+  const built = moved.vcs.count;
+  await drain(moved);
+  assert.deepEqual([landed(moved), await onTrunk(moved), moved.forge.tickets.get('a').state], [['a', 'b'], ['a', 'b'], 'done']);
+  assert.equal(moved.vcs.count - built, 1, 'one candidate is built for b; the queue does not spin');
+});
+
 test('queue tick: while the factory is halted, results are read but nothing lands and nobody is evicted', async () => {
   const context = setup({ batchSize: 1, maxParallelChecks: 2, flakyRetries: 0 }, ['a', 'b']);
   let halted = true;
@@ -172,7 +209,7 @@ test('queue tick: while the factory is halted, results are read but nothing land
   assert.deepEqual([landed(context), evicted(context)], [['a'], ['b']]);
 });
 
-test('queue tick: random admissions, failures, timings and interrupted ticks always converge on the right trunk', async () => {
+test('queue tick: random admissions, failures, timings, interrupted ticks and outside commits always converge on the right trunk', async () => {
   let seed = 20261120;
   const random = () => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -187,6 +224,8 @@ test('queue tick: random admissions, failures, timings and interrupted ticks alw
     for (let tick = 0; tick < 200; tick += 1) {
       while (waiting.length > 0 && random() < 0.5) context.admit(waiting.shift());
       if (random() < 0.15) await queueTick(context.store, config, context.ports); // a tick whose state is lost before it is saved
+      if (waiting.length > 0 && random() < 0.3) context.admit(waiting.shift()); // the dispatcher admits a change before the replay
+      if (random() < 0.03) outside(context); // a person merges something by hand
       await context.tick();
       // Verdicts arrive in a random order and at random times.
       for (const [sha, changes] of context.vcs.contents) {
@@ -197,6 +236,6 @@ test('queue tick: random admissions, failures, timings and interrupted ticks alw
     const label = `round ${round} ${JSON.stringify(queueConfig)} bad=${[...bad]}`;
     assert.deepEqual(landed(context).sort(), ids.filter((id) => !bad.has(id)).sort(), label);
     assert.deepEqual(evicted(context).sort(), [...bad].sort(), label);
-    assert.deepEqual([...new Set(await onTrunk(context))].sort(), ids.filter((id) => !bad.has(id)).sort(), label);
+    assert.deepEqual((await onTrunk(context)).sort(), ids.filter((id) => !bad.has(id)).sort(), `${label}: each good change is on the trunk exactly once`);
   }
 });

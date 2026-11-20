@@ -28,6 +28,7 @@ export class GitVcs {
     this.host = options.host ?? 'github.com';
     this.remote = options.remote ?? 'origin';
     this.identity = options.identity ?? { name: 'pheromill', email: 'pheromill@localhost' };
+    this.networkTimeoutMs = options.networkTimeoutMs ?? 120000;
   }
 
   /**
@@ -58,8 +59,11 @@ export class GitVcs {
       ...(workTree ? { GIT_WORK_TREE: workTree } : {}),
     };
     return new Promise((resolve, reject) => {
-      const child = execFile('git', [...HARDENING, ...args], { env, cwd: workTree ?? gitDir, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
-        if (error && typeof error.code !== 'number') reject(new Error(`git ${args[0]} could not run: ${error.message}`));
+      // A remote that stops answering must not hold a service loop for ever.
+      const timeout = network ? this.networkTimeoutMs : 0;
+      const child = execFile('git', [...HARDENING, ...args], { env, cwd: workTree ?? gitDir, maxBuffer: 64 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
+        if (error?.killed) reject(new Error(`git ${args[0]} did not finish within ${timeout} ms.`));
+        else if (error && typeof error.code !== 'number') reject(new Error(`git ${args[0]} could not run: ${error.message}`));
         else resolve({ code: error ? error.code : 0, stdout, stderr });
       });
       if (input !== null) child.stdin.end(input);

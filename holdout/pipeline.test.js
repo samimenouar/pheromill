@@ -143,6 +143,7 @@ test('pipeline: a confirmed blocking finding costs one fix round; refuted and mi
   const imaginary = { category: 'bug', path: 'src/app/greeting.js', message: 'imaginary race condition', severity: 'blocking' };
   const minor = { category: 'style', path: 'src/app/greeting.js', message: 'name could be clearer', severity: 'minor' };
   const script = baseScript({
+    implement: (job, attempt) => ({ patch: attemptPatch(attempt) }),
     review: (job, attempt) => (attempt === 1 ? { report: { findings: [blocking, imaginary, minor], criteria: approve.report.criteria } } : approve),
     refute: () => ({ report: { verdicts: { [fingerprint(blocking)]: 'confirmed', [fingerprint(minor)]: 'confirmed', [fingerprint(imaginary)]: 'refuted' } } }),
   });
@@ -151,14 +152,14 @@ test('pipeline: a confirmed blocking finding costs one fix round; refuted and mi
   const implementJobs = runner.jobs.filter((job) => job.step === 'implement');
   assert.equal(implementJobs.length, 2);
   assert.deepEqual(implementJobs[1].input.feedback, ['bug in src/app/greeting.js: returns the wrong greeting']);
-  assert.deepEqual([implementJobs[0].patches, implementJobs[1].patches], [[], [goodPatch]], 'a correction round starts from the previous attempt, not from scratch');
+  assert.deepEqual([implementJobs[0].patches, implementJobs[1].patches], [[], [attemptPatch(1)]], 'a correction round starts from the previous attempt, not from scratch');
   assert.deepEqual(runner.jobs.filter((job) => job.step === 'refute').map((job) => job.route.family), ['openai'], 'the author family never decides which findings count');
   assert.deepEqual(ledger.ofType('debt_finding').map((entry) => entry.message), ['name could be clearer']);
   assert.equal(forge.comments.length, 1);
 });
 
 test('pipeline: an acceptance criterion without evidence is not done', async () => {
-  const script = baseScript({ review: (job, attempt) => (attempt === 1 ? { report: { findings: [], criteria: {} } } : approve) });
+  const script = baseScript({ implement: (job, attempt) => ({ patch: attemptPatch(attempt) }), review: (job, attempt) => (attempt === 1 ? { report: { findings: [], criteria: {} } } : approve) });
   const { result, runner } = await run(script);
   assert.equal(result.outcome, 'queued');
   assert.deepEqual(runner.jobs.filter((job) => job.step === 'implement')[1].input.feedback, [`Acceptance criterion not evidenced: ${criteria[0]}`]);
@@ -344,6 +345,20 @@ test('pipeline: an author who hands in the same patch again has changed nothing'
   assert.equal(steps.filter((step) => step.startsWith('implement')).length, 6);
 });
 
+test('pipeline: what was confirmed on a patch still stands when the same patch is handed in again', async () => {
+  const blocking = { category: 'bug', path: 'src/app/greeting.js', message: 'greets nobody', severity: 'blocking' };
+  const script = baseScript({
+    review: (job, attempt) => (attempt === 1 ? { report: { findings: [blocking], criteria: approve.report.criteria } } : approve),
+    refute: () => ({ report: { verdicts: { [fingerprint(blocking)]: 'confirmed' } } }),
+    arbitrate: () => ({ report: { action: 'ask_owner' } }),
+  });
+  const { result, runner, ledger, vcs } = await run(script);
+  assert.equal(result.outcome, 'needs_owner', 'a second, more lenient review is never what lets unchanged work through');
+  assert.deepEqual([runner.jobs.filter((job) => job.step === 'review').length, vcs.published.length, ledger.ofType('gates_passed').length], [1, 1, 0]);
+  assert.match(runner.jobs.filter((job) => job.step === 'implement')[1 + 1].input.feedback.join(' '), /unchanged.*greets nobody/);
+  assert.deepEqual(ledger.ofType('arbitration').map((entry) => entry.trigger), ['no_change_twice']);
+});
+
 test('pipeline: a finding that comes back after it was refuted is never dropped; the arbiter decides', async () => {
   const real = { category: 'bug', path: 'src/app/greeting.js', message: 'returns the wrong greeting', severity: 'blocking' };
   const disputed = { category: 'bug', path: 'src/app/greeting.js', message: 'race condition on line 12', severity: 'blocking' };
@@ -444,10 +459,23 @@ test('pipeline: what the scenarios assume about the interface is passed to the i
 
 test('pipeline: a halt stops a ticket before its next step and before anything is published', async () => {
   let asked = 0;
-  const halted = async () => (asked += 1) > 2; // specify and implement run, then the owner halts
+  const halted = async () => (asked += 1) > 4; // asked before and after each step: specify and implement run, then the owner halts
   const { result, vcs, steps, ledger } = await run(baseScript(), { halted });
   assert.equal(result.outcome, 'halted');
   assert.deepEqual(steps, ['specify:anthropic', 'implement:anthropic']);
   assert.equal(vcs.published.length, 0);
   assert.equal(ledger.ofType('ticket_outcome')[0].outcome, 'halted');
+
+  let since = 0;
+  const killed = await run(baseScript({ specify: () => ({ report: { error: 'exit_137' } }) }), { halted: async () => (since += 1) > 1 });
+  assert.equal(killed.result.outcome, 'halted', 'a step killed during a halt is not a failure of the ticket: it resumes later');
+});
+
+test('pipeline: every run of a ticket has its own step identifiers', async () => {
+  const { runner } = await run(baseScript());
+  const ids = runner.jobs.map((job) => job.runId);
+  assert.ok(ids.every((id) => /^t7-[a-z0-9]+-\d+$/.test(id)) && new Set(ids).size === ids.length, ids.join(' '));
+  const later = { runner: new ScriptedRunner(baseScript()), vcs: new MemoryVcs(), forge: new MemoryForge(), checks: new ScriptedChecks(), registry: new StaticRegistry(), ledger: new MemoryLedger(), clock: { now: () => new Date('2026-11-20T00:00:01Z') } };
+  await runTicket(ticket(), factoryConfig(), later);
+  assert.notEqual(later.runner.jobs[0].runId, ids[0], 'a ticket that starts again never reuses the workspace or container name of its earlier run');
 });

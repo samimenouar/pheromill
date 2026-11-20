@@ -13,6 +13,7 @@ makes sure the only way to pass is to do the work.
 | Approve its own work | Reviewers and the refuter never belong to a family that wrote the implementation. This is enforced by routing, not by instruction, and the runner refuses to launch a job on another family than the one it was routed to. |
 | Report success without evidence | Each acceptance criterion needs evidence seen by the reviewer. A step that crashed, timed out or returned a malformed report stops the ticket; it never counts as approval. |
 | Argue a finding away | A finding is dropped only by an explicit refutation from a family that did not write the implementation; a missing verdict stops the ticket. |
+| Hand in the same work again and hope for a kinder review | What was confirmed on a patch still stands when the same patch comes back: it is sent back without a new review, and a second time stops the ticket. |
 | Wear the reviewer down | A finding that comes back after it was refuted is not dropped and not argued again: the ticket stops and the arbiter decides. |
 | Change the rules | Configuration, pipelines, prompts and agent rules are reserved paths: touching them is CRITICAL. In this repository the factory's own source is reserved too. |
 | Say one thing and do another in a patch | The gates do not read the patch as the agent wrote it. The patch is applied, and git reports the paths and modes it really changes. |

@@ -11,13 +11,13 @@
  * state and from what the trunk really contains, so replaying it lands,
  * evicts and records each change exactly once.
  */
-import { dequeue, enqueue, forget, plan, recordResult, settle } from '../domain/merge-queue.js';
+import { acknowledgeLanded, dequeue, enqueue, forget, plan, recordResult, settle } from '../domain/merge-queue.js';
 
 /**
  * @param {{queue: object,
  *   candidates: Record<string, {sha: string, parent: string, count: number, reported: boolean}>,
- *   changes: Record<string, {branch: string, sha: string, ticketId: string, likelyFiles?: string[]}>,
- *   awaiting?: object}} store persisted queue state
+ *   changes: Record<string, {branch: string, sha: string, ticketId: string, admission?: number, likelyFiles?: string[]}>,
+ *   admissions?: number, awaiting?: object}} store persisted queue state
  * @param {{project: {trunk: string}}} config
  * @param {{vcs: import('./ports.js').Vcs, checks: import('./ports.js').Checks,
  *   forge: import('./ports.js').Forge, ledger: import('./ports.js').Ledger,
@@ -31,32 +31,52 @@ export async function queueTick(store, config, ports) {
   let candidates = { ...store.candidates };
   const changes = { ...store.changes };
 
+  // One stay of a commit in the queue: the admission number tells two stays apart, and a replayed tick sees the same one.
+  const stay = (id) => `${id}@${changes[id].sha}#${changes[id].admission ?? 0}`;
   const sendBack = async (id, reason) => {
-    // The epoch tells two stays of the same commit in the queue apart; a replayed tick sees the same one.
-    const eviction = `${id}@${changes[id].sha}#e${store.queue.epoch}`;
-    await ledger.appendOnce('evict', eviction, { change: id, ticket: changes[id].ticketId, reason });
-    await ledger.appendOnce('ticket_outcome', `evict:${eviction}`, { ticket: changes[id].ticketId, outcome: 'rework', reason });
+    await ledger.appendOnce('evict', stay(id), { change: id, ticket: changes[id].ticketId, reason });
+    await ledger.appendOnce('ticket_outcome', `evict:${stay(id)}`, { ticket: changes[id].ticketId, outcome: 'rework', reason });
     await forge.setTicketState(changes[id].ticketId, 'rework', reason);
     delete changes[id];
   };
   const byCount = () => Object.entries(candidates).sort((a, b) => a[1].count - b[1].count);
+  /** Bookkeeping of a landing: one ledger entry per change, tickets closed, changes forgotten. */
+  const recordLanding = async (ids, sha) => {
+    for (const id of ids) {
+      await ledger.appendOnce('merge', stay(id), { change: id, ticket: changes[id].ticketId, sha });
+      await forge.setTicketState(changes[id].ticketId, 'done', `Landed in ${sha}.`);
+      delete changes[id];
+    }
+  };
 
-  // 0. Drop every candidate that no longer chains from the trunk head (the
-  //    trunk moved outside the queue, or its parent was rebuilt). A candidate
-  //    the trunk already contains was landed by a tick that did not finish:
-  //    it passed, and step 2 completes its bookkeeping without landing it again.
+  // 0. A candidate the trunk already contains was landed by a tick that did
+  //    not finish (or pushed by hand). Its changes are on the trunk whatever
+  //    the plan says now: complete their bookkeeping, never land them again,
+  //    and plan everything else afresh.
   const start = await vcs.head(trunk);
+  const acknowledged = [];
+  let settledCount = queue.landed.length;
+  for (const [key, candidate] of byCount()) {
+    if (!(await vcs.isAncestor(candidate.sha, start))) continue;
+    if (candidate.count > settledCount) {
+      const ids = queue.pending.slice(settledCount - queue.landed.length, candidate.count - queue.landed.length);
+      await recordLanding(ids, candidate.sha);
+      acknowledged.push(...ids);
+      settledCount = candidate.count;
+    }
+    delete candidates[key]; // otherwise a shorter prefix of what already landed
+  }
+  if (acknowledged.length > 0) {
+    const noted = acknowledgeLanded(queue, acknowledged);
+    queue = noted.state;
+    candidates = {};
+    if (noted.evicted) await sendBack(noted.evicted, 'Isolated by bisection.');
+  }
+
+  //    Then drop every candidate that no longer chains from the trunk head
+  //    (the trunk moved outside the queue, or its parent was rebuilt).
   let link = start;
   for (const [key, candidate] of byCount()) {
-    if (await vcs.isAncestor(candidate.sha, start)) {
-      if (candidate.count <= queue.landed.length) {
-        delete candidates[key]; // a shorter prefix of what already landed: nothing left to do with it
-      } else if (!candidate.reported) {
-        queue = recordResult(queue, key, 'pass');
-        candidates[key] = { ...candidate, reported: true };
-      }
-      continue;
-    }
     if (candidate.parent === link) {
       link = candidate.sha;
     } else {
@@ -90,11 +110,7 @@ export async function queueTick(store, config, ports) {
     if (action.type === 'merge') {
       const { sha } = candidates[action.key];
       if (!(await vcs.isAncestor(sha, await vcs.head(trunk)))) await vcs.fastForward(trunk, sha);
-      await ledger.appendOnce('merge', sha, { changes: action.changes, sha });
-      for (const id of action.changes) {
-        await forge.setTicketState(changes[id].ticketId, 'done', `Landed in ${sha}.`);
-        delete changes[id];
-      }
+      await recordLanding(action.changes, sha);
       delete candidates[action.key];
     } else if (action.type === 'evict') {
       await sendBack(action.change, action.reason);
@@ -138,9 +154,11 @@ function planAll(queue) {
 
 /** Add an approved change to the queue, pinned to the commit that passed its gates. */
 export function admitChange(store, change) {
+  const admission = (store.admissions ?? 0) + 1;
   return {
     ...store,
+    admissions: admission,
     queue: enqueue(store.queue, change.id),
-    changes: { ...store.changes, [change.id]: { branch: change.branch, sha: change.sha, ticketId: change.ticketId, likelyFiles: change.likelyFiles ?? [] } },
+    changes: { ...store.changes, [change.id]: { branch: change.branch, sha: change.sha, ticketId: change.ticketId, admission, likelyFiles: change.likelyFiles ?? [] } },
   };
 }

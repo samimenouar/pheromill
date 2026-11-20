@@ -71,11 +71,14 @@ export async function runTicket(ticket, config, ports) {
   let excludedAuthors = [];
   let authors = new Set();
   let lastAttempt = null; // the last patch this author produced, accepted or not
+  let standing = null; // confirmed findings and the patch they were confirmed on
   let changeId = null;
   let stepCount = 0;
   const base = await vcs.head(config.project.trunk);
   const branch = `factory/t${ticket.id}`;
-  const runId = `t${ticket.id}`.toLowerCase();
+  // Unique per run of the pipeline: a ticket that starts again never shares a
+  // workspace or a container name with a step of its earlier run still ending.
+  const runId = `t${ticket.id}-${clock.now().getTime().toString(36)}`.toLowerCase();
 
   const unlessHalted = async () => {
     if (await ports.halted?.()) throw new Interrupted('The factory was halted by its owner.');
@@ -89,6 +92,7 @@ export async function runTicket(ticket, config, ports) {
     if (typeof result.tokens === 'number' && run.counters.tokens !== null) run.counters.tokens += result.tokens;
     else run.counters.tokens = null; // unknown stays unknown
     await log('step', { step, harness: route.harness, model: route.model, family: route.family, seconds: result.seconds, tokens: result.tokens, error: result.report?.error ?? null });
+    await unlessHalted(); // a step that ended during a halt, perhaps killed, decides nothing
     return result;
   };
 
@@ -175,6 +179,7 @@ export async function runTicket(ticket, config, ports) {
         authors = new Set();
         previous = null;
         lastAttempt = null;
+        standing = null;
         run.steps = [];
         run.changedLines = 0;
         run.raisedFingerprints = [];
@@ -266,6 +271,14 @@ export async function runTicket(ticket, config, ports) {
         feedback = [];
         continue;
       }
+      // What was confirmed on a patch stays confirmed on the same patch: a second,
+      // more lenient review of unchanged work must not be what lets it through.
+      if (standing?.patch === change.patch && change.patch !== '') {
+        record.errorSignature = 'review:unchanged_after_findings';
+        feedback = await sendBack(['The patch is unchanged, so what was confirmed about it still stands.', ...standing.lines]);
+        continue;
+      }
+      standing = null;
 
       // Deterministic patch gate. The size limit applies to the change as published, scenarios included.
       const gate = checkPatch(files, config, { carriedLines: holdoutLines });
@@ -363,7 +376,8 @@ export async function runTicket(ticket, config, ports) {
         continue;
       }
       if (judged.blocking.length > 0 || unmet.size > 0) {
-        feedback = await sendBack([...judged.blocking.map(describe), ...[...unmet].map((criterion) => `Acceptance criterion not evidenced: ${criterion}`)]);
+        standing = { patch: change.patch, lines: [...judged.blocking.map(describe), ...[...unmet].map((criterion) => `Acceptance criterion not evidenced: ${criterion}`)] };
+        feedback = await sendBack(standing.lines);
         continue;
       }
 
@@ -384,7 +398,8 @@ export async function runTicket(ticket, config, ports) {
             continue;
           }
           if (verdict.blocking.length > 0) {
-            feedback = await sendBack(verdict.blocking.map(describe));
+            standing = { patch: change.patch, lines: verdict.blocking.map(describe) };
+            feedback = await sendBack(standing.lines);
             continue;
           }
         }

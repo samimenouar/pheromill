@@ -115,8 +115,8 @@ incident:
 **Halt (red button).** Create the file `HALT` in the control state directory.
 While it exists no step starts, nothing is published and nothing lands; a
 ticket that was running goes back to the pile and resumes after the file is
-removed, without using its rework allowance. To stop steps that are already
-running, kill the sandboxes on the runner host:
+removed, without using its rework allowance, also when its step was killed.
+To stop steps that are already running, kill the sandboxes on the runner host:
 `docker kill $(docker ps -q --filter label=pheromill.sandbox=true)`.
 
 **Suspected compromise.**

@@ -208,7 +208,10 @@ PROVISIONAL(license): the license was chosen by the author of the genesis import
   outlived the commit it was given on; a finding refuted once was ignored for
   good; an interrupted queue tick could record a landing twice; the label set
   of an issue was replaced as a whole; lists from the forge were read one
-  page deep; the size limit ignored the hidden scenarios.
+  page deep; the size limit ignored the hidden scenarios. A last agent then
+  attacked those fixes and found two more defects, fixed before the merge: a
+  landing interrupted just before an admission could be repeated, and a
+  confirmed finding vanished when the same patch was handed in again.
 - **Risk.** The reviewing agents were of the same model family as the author.
   Which models the automated tool runs is not something this repository can
   attest. The owner's review of the genesis change is the missing independent
@@ -242,8 +245,9 @@ PROVISIONAL(license): the license was chosen by the author of the genesis import
 ## D-20 The trunk and the saved state decide, not the memory of a tick
 
 - **Decision.** A queue tick may stop anywhere. The next one treats a
-  candidate the trunk already contains as landed, and records landings and
-  evictions under an identity, so that a replay leaves one trace.
+  candidate the trunk already contains as landed, whatever the plan has
+  become since, and records each landing and eviction under the identity of
+  one stay in the queue, so that a replay leaves one trace.
 - **Why.** The fast-forward, the ledger and the state file cannot be written
   in one atomic step.
 - **Benefit.** A crash, a full disk or a forge outage in the middle of a tick

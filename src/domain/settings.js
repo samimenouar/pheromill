@@ -15,8 +15,8 @@ export function desiredSettings(config) {
     labels: [
       { name: 'factory:ready', color: '0e8a16', description: 'Ticket validated and ready to be dispatched' },
       { name: 'factory:in-progress', color: '1d76db', description: 'An agent is working on this ticket' },
-      { name: 'factory:queued', color: '0052cc', description: 'All gates passed; waiting in the merge queue or for approval' },
-      { name: 'factory:approved', color: '0e8a16', description: 'Put on a change request by a person: admit it to the merge queue' },
+      { name: 'factory:queued', color: '0052cc', description: 'All gates passed; waiting in the merge queue' },
+      { name: 'factory:approved', color: '0e8a16', description: 'Put on a change request by a person: admit the reviewed commit to the merge queue' },
       { name: 'factory:rework', color: 'd93f0b', description: 'Acceptance criteria not met; same ticket, new attempt' },
       { name: 'factory:needs-owner', color: 'b60205', description: 'The factory stopped and needs a human decision' },
       { name: 'factory:later', color: 'c5def5', description: 'Outside the frozen scope of the active milestone' },

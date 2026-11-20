@@ -41,12 +41,13 @@ export async function dispatchTick(memory, config, ports) {
   });
   for (const { id, sha } of approved) {
     // An approval is spent once: it never carries over to a later commit of the same change request.
+    // Also repeated for a change admitted by a tick that could not finish its labelling.
+    const queued = state.changes[id];
+    if (queued) await forge.setTicketState(queued.ticketId, 'queued', `Approved; change #${id} entered the merge queue.`);
     await forge.clearApproval(id);
-    const entry = admitted.find((change) => change.id === id);
-    if (entry) {
-      await forge.setTicketState(entry.ticketId, 'queued', `Approved; change #${id} entered the merge queue.`);
-      outcomes[entry.ticketId] = 'queued';
-    } else if (!state.changes[id]) {
+    if (admitted.some((change) => change.id === id)) {
+      outcomes[queued.ticketId] = 'queued';
+    } else if (!queued) {
       const reviewed = state.awaiting?.[id]?.sha;
       const why = reviewed ? `it points to ${sha}, and the commit that passed the gates is ${reviewed}` : 'it is not waiting for an approval';
       await forge.comment(id, `The label "factory:approved" was removed from this change request: ${why}.`);
@@ -71,8 +72,8 @@ export async function dispatchTick(memory, config, ports) {
   for (const issue of await forge.listTickets('factory:in-progress')) {
     if (known.has(String(issue.id))) continue;
     const reason = 'Interrupted before it finished; it will start again.';
+    await forge.setTicketState(String(issue.id), 'rework', reason); // the label first: a forge that refuses it must not add a rework per tick
     await note(String(issue.id), 'rework', reason);
-    await forge.setTicketState(String(issue.id), 'rework', reason);
   }
 
   const issues = [...(await forge.listTickets('factory:rework')), ...(await forge.listTickets('factory:ready'))];
@@ -92,8 +93,8 @@ export async function dispatchTick(memory, config, ports) {
     } else if (ticket.reworks >= config.scheduling.maxReworks) {
       outcomes[ticket.id] = 'needs_owner';
       const reason = `Sent back to rework ${ticket.reworks} times; the owner decides what happens next. Labelling it "factory:ready" again gives it a fresh allowance.`;
+      await forge.setTicketState(ticket.id, 'needs_owner', reason); // the label first: the allowance is renewed only once the owner has the ticket
       await note(ticket.id, 'needs_owner', reason);
-      await forge.setTicketState(ticket.id, 'needs_owner', reason);
     } else {
       eligible.push(ticket);
     }

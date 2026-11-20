@@ -46,6 +46,7 @@ export function appTokenProvider(options) {
       method: 'POST',
       headers: { authorization: `Bearer ${unsigned}.${signature}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
       body: JSON.stringify({ repositories: [options.repository.split('/')[1]], permissions: options.permissions }),
+      signal: AbortSignal.timeout(options.requestTimeoutMs ?? 30000),
     });
     if (!response.ok) throw new Error(`GitHub App token request failed with status ${response.status}.`);
     const body = await response.json();
@@ -127,7 +128,8 @@ export class GitHubForge {
     // the text at any time, including after it was labelled.
     const trusted = (issue) =>
       TRUSTED_AUTHORS.includes(issue.author_association) ||
-      (this.trustedAppId !== null && issue.performed_via_github_app?.id === this.trustedAppId);
+      // Written by the App itself, not by a person acting through it.
+      (this.trustedAppId !== null && issue.performed_via_github_app?.id === this.trustedAppId && issue.user?.type === 'Bot');
     return issues
       .filter((issue) => !issue.pull_request && trusted(issue))
       .map((issue) => ({
